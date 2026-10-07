@@ -650,6 +650,8 @@
     <string name="upd_fork_open">DroidDeck のリリースを開く</string>
     <string name="upd_fork_manual">または、このアドレスをブラウザで開いてください：</string>
     <string name="upd_fork_no_browser">ブラウザを開けませんでした。下のアドレスを手動で開いてください。</string>
+    <string name="upd_fork_project_open">このプロジェクトの GitHub を開く</string>
+    <string name="upd_fork_project">このプロジェクトの GitHub：</string>
     <string name="upd_available">アップデートあり</string>
     <string name="upd_blocked_status">インストールできません</string>
     <string name="upd_switch">切り替え可能</string>

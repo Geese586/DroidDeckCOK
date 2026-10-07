@@ -34,7 +34,7 @@ DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve �
 
 ## 二、安装 APK
 
-用本仓库构建出来的包在 `dist\DroidDeckCOK-0.3.1-release.apk`（版本 `0.3.1`，versionCode `11`，包名 `com.droiddeck.launcher`）。
+用本仓库构建出来的包在 `DroidDeckCOK-0.3.1-release.apk`（版本 `0.3.1`，versionCode `11`，包名 `com.droiddeck.launcher`）。
 
 文件名里的 `DroidDeckCOK` 只是本仓库给构建产物起的名字（COK 即 Chinese One Key）。**包名、版本号、应用名全部沿用上游 0.3.1，一个都没改**，所以装到设备上桌面图标仍然显示 `DroidDeck`，覆盖升级的行为也和以前一样。
 
@@ -85,7 +85,7 @@ adb push FirstLocalInstall /sdcard/Download/
 
 ### 3.3 操作步骤
 
-1. 装好本 APK（`dist\DroidDeckCOK-0.3.1-release.apk`）并打开 DroidDeck
+1. 装好本 APK（`DroidDeckCOK-0.3.1-release.apk`）并打开 DroidDeck
 2. 进入 **Steam → 游玩 Steam** 页面
 3. 点齿轮图标**右边**的 **「首次本地一键安装」** 按钮
 4. 在弹出的选择器里选中手机上的 `FirstLocalInstall` 文件夹（**选它的上一级 `/Download` 也可以**）
@@ -101,7 +101,7 @@ build-apk.bat
 
 它会自动完成：找 Android SDK / JDK 17+ / NDK、链接 NDK 到 Gradle 要求的位置、**从中国大陆地区的镜像取 Gradle 本体**（`gradlew` 会去 `services.gradle.org`，那个域名会重定向到 `github.com`，在中国大陆地区的网络下常连不上）、写入 `local.properties`、编译、**校验 APK 里真的带上了原生载荷**、签名，最后把包复制到 `dist\` 并打开该目录。
 
-产出：`dist\DroidDeckCOK-0.3.1-release.apk`
+产出：`DroidDeckCOK-0.3.1-release.apk`
 
 所需环境：Android SDK（含 **Platform 34**，项目 `compileSdk 34`）、JDK 17 或更高、NDK `27.3.13750724`。
 

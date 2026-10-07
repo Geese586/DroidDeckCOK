@@ -8,6 +8,7 @@ captures/
 .externalNativeBuild/
 .cxx/
 .kotlin/
+.workbuddy
 # Built in CI from tools/linuxfs and app/src/main/cpp/fakeinput.cpp, never committed, so the two
 # copies cannot drift.
 app/src/main/assets/linuxfs/

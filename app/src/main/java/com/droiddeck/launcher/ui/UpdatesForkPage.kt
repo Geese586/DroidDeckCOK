@@ -35,8 +35,15 @@ import androidx.compose.ui.unit.sp
 import com.droiddeck.launcher.R
 import com.droiddeck.launcher.update.AppUpdates
 
-/** Where a newer build is looked for, now that this copy cannot install one by itself. */
+/** Where the official build's newer releases are published. */
 private const val RELEASES_URL = "https://github.com/Droid-Deck/DroidDeck/releases"
+
+/**
+ * This build's own repository. The page hands over both addresses because the two answer different
+ * questions: DroidDeck's releases are where the official builds are, and this one is where a build
+ * that actually installs over this copy - same signer - is published.
+ */
+private const val PROJECT_URL = "https://github.com/Geese586/DroidDeckCOK"
 
 /**
  * The Updates page for this checkout.
@@ -44,8 +51,9 @@ private const val RELEASES_URL = "https://github.com/Droid-Deck/DroidDeck/releas
  * Upstream's page weighs the running build against the published catalog and installs what it finds.
  * That cannot work here: this APK is signed with a key of its own rather than DroidDeck's release
  * key, and Android refuses to install a build of one signer over another. Rather than keep a page
- * whose one button could only ever fail, this one says why and hands over the address newer builds
- * are looked for at - and installed from - by hand.
+ * whose one button could only ever fail, this one says why and hands over the two addresses newer
+ * builds are looked for at - DroidDeck's releases, and this fork's own repository - each one tap
+ * away, and both printed for a device that has no browser to take them.
  *
  * Upstream's page, its state and the catalog behind them are all left untouched, so they come back
  * whole with an upstream merge; only the rail's one route points here instead (FrontEndContent).
@@ -92,11 +100,21 @@ internal fun UpdatesForkPage(s: FrontEndState, modifier: Modifier = Modifier) {
                     stringResource(R.string.upd_fork_own_builds), fontSize = 13.sp, color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
-                Box(Modifier.padding(top = 16.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 16.dp),
+                ) {
                     PrimaryButton(
                         stringResource(R.string.upd_fork_open), main = true, icon = Icons.Outlined.OpenInNew,
                     ) {
                         val page = Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_URL))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        noBrowser = runCatching { context.startActivity(page) }.isFailure
+                    }
+                    // This fork's own repository: the one place where a build that installs over this
+                    // copy (same signer) is published. Same fallback as the button above.
+                    SecondaryButton(stringResource(R.string.upd_fork_project_open)) {
+                        val page = Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL))
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         noBrowser = runCatching { context.startActivity(page) }.isFailure
                     }
@@ -106,9 +124,14 @@ internal fun UpdatesForkPage(s: FrontEndState, modifier: Modifier = Modifier) {
                     fontSize = 12.5.sp, color = if (noBrowser) pal.error else colors.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),
                 )
-                // Printed whether or not the button worked: on a device with no browser, this line
-                // is the address, not a footnote to it.
+                // Printed whether or not the buttons worked: on a device with no browser, these lines
+                // are the addresses, not footnotes to them.
                 Text(RELEASES_URL, fontSize = 12.5.sp, color = pal.signal, modifier = Modifier.padding(top = 2.dp))
+                Text(
+                    stringResource(R.string.upd_fork_project), fontSize = 12.5.sp,
+                    color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
+                )
+                Text(PROJECT_URL, fontSize = 12.5.sp, color = pal.signal, modifier = Modifier.padding(top = 2.dp))
             }
         }
     }

@@ -649,6 +649,8 @@
     <string name="upd_fork_open">打开 DroidDeck 发布页</string>
     <string name="upd_fork_manual">也可以在浏览器里打开这个地址：</string>
     <string name="upd_fork_no_browser">没能打开浏览器，请手动访问下面的地址。</string>
+    <string name="upd_fork_project_open">打开本项目的 GitHub</string>
+    <string name="upd_fork_project">本项目的 GitHub：</string>
     <string name="upd_available">有可用更新</string>
     <string name="upd_blocked_status">无法安装</string>
     <string name="upd_switch">已可切换</string>

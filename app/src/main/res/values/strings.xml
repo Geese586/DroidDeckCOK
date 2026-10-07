@@ -721,6 +721,8 @@
     <string name="upd_fork_open">Open DroidDeck\'s releases</string>
     <string name="upd_fork_manual">Or open this address in a browser:</string>
     <string name="upd_fork_no_browser">No browser would take it. Open the address below by hand.</string>
+    <string name="upd_fork_project_open">Open this project\'s GitHub</string>
+    <string name="upd_fork_project">This project\'s GitHub:</string>
     <string name="upd_available">Update available</string>
     <string name="upd_blocked_status">Can\'t install</string>
     <string name="upd_switch">Ready to switch</string>

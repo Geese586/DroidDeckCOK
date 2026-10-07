@@ -650,6 +650,8 @@
     <string name="upd_fork_open">DroidDeck 릴리스 열기</string>
     <string name="upd_fork_manual">또는 이 주소를 브라우저에서 여세요:</string>
     <string name="upd_fork_no_browser">브라우저를 열 수 없습니다. 아래 주소를 직접 여세요.</string>
+    <string name="upd_fork_project_open">이 프로젝트의 GitHub 열기</string>
+    <string name="upd_fork_project">이 프로젝트의 GitHub:</string>
     <string name="upd_available">업데이트 있음</string>
     <string name="upd_blocked_status">설치 불가</string>
     <string name="upd_switch">전환 가능</string>

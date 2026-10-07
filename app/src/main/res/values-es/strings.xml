@@ -666,6 +666,8 @@
     <string name="upd_fork_open">Abrir las versiones de DroidDeck</string>
     <string name="upd_fork_manual">O abre esta dirección en un navegador:</string>
     <string name="upd_fork_no_browser">Ningún navegador la aceptó. Abre la dirección de abajo a mano.</string>
+    <string name="upd_fork_project_open">Abrir el GitHub de este proyecto</string>
+    <string name="upd_fork_project">GitHub de este proyecto:</string>
     <string name="upd_available">Actualización disponible</string>
     <string name="upd_blocked_status">No se puede instalar</string>
     <string name="upd_switch">Lista para cambiar</string>
