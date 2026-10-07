@@ -1,0 +1,32 @@
+#!/bin/bash
+# Runs a program from the desktop on the GPU: in a gamescope of its own that draws straight into
+# the app's compositor (wayland-0), not inside labwc. The desktop is composited by pixman, and
+# pixman gives its windows no DMA-BUFs - a Vulkan program there fails at its swapchain
+# (VK_ERROR_SURFACE_LOST, RPCS3's error). Here it gets the same path as a program started from the
+# app's rail: full screen over the desktop until it exits, then the desktop is back.
+#   droiddeck-gpu <program> [args...]
+set -u
+[ $# -gt 0 ] || { echo "usage: droiddeck-gpu <program> [args...]" >&2; exit 64; }
+if [ -n "${BL_DEBUG_DIR:-}" ]; then
+  exec >>"$BL_DEBUG_DIR/desktop.log" 2>&1
+fi
+width=${BL_WIDTH:-1280}
+height=${BL_HEIGHT:-720}
+args=(--backend wayland --expose-wayland -f -W "$width" -H "$height" -w "$width" -h "$height")
+if [ "${BL_FPS:-0}" -gt 0 ]; then
+  args+=(-r "$BL_FPS")
+elif [ "${BL_REFRESH:-0}" -gt 0 ]; then
+  args+=(-r "$BL_REFRESH")
+fi
+[ "${BL_HDR:-0}" = 1 ] && args+=(--hdr-enabled)
+echo "== droiddeck-gpu $(date -u +%H:%M:%S): $* (gamescope ${width}x${height} on wayland-0)"
+# gamescope is a client of the app's compositor, beside labwc; the program inside it reaches it
+# through gamescope's own Xwayland, as in a Steam session.
+export WAYLAND_DISPLAY=wayland-0
+export GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb SDL_VIDEODRIVER=x11
+# AppImages cannot mount under proot; the menu entries already say so, a hand-typed one may not.
+export APPIMAGE_EXTRACT_AND_RUN=1
+gamescope "${args[@]}" -- "$@"
+rc=$?
+echo "== droiddeck-gpu $(date -u +%H:%M:%S): exited $rc"
+exit $rc

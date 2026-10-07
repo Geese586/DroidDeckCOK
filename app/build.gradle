@@ -1,0 +1,213 @@
+plugins {
+    id 'com.android.application'
+}
+apply plugin: 'kotlin-android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
+
+def gitValue = { List<String> arguments ->
+    try {
+        def output = providers.exec {
+            commandLine(['git'] + arguments)
+            workingDir rootProject.projectDir
+            ignoreExitValue = true
+        }
+        output.result.get().exitValue == 0 ? output.standardOutput.asText.get().trim() : null
+    } catch (Exception ignored) {
+        null
+    }
+}
+
+def buildLabel = providers.environmentVariable('DROIDDECK_BUILD_LABEL').getOrNull()
+if (buildLabel == null || buildLabel.trim().isEmpty()) {
+    def eventName = providers.environmentVariable('GITHUB_EVENT_NAME').getOrNull()
+    def eventPath = providers.environmentVariable('GITHUB_EVENT_PATH').getOrNull()
+    if (eventName == 'pull_request_target' && eventPath) {
+        try {
+            def eventFile = layout.file(providers.provider { new File(eventPath) })
+            def eventText = providers.fileContents(eventFile).asText.get()
+            def pullRequest = new groovy.json.JsonSlurper().parseText(eventText).pull_request
+            if (pullRequest?.number && pullRequest?.head?.sha) {
+                buildLabel = "pr${pullRequest.number} at ${pullRequest.head.sha.take(7)}"
+            }
+        } catch (Exception ignored) {
+        }
+    }
+    if (buildLabel == null || buildLabel.trim().isEmpty()) {
+        def branch = providers.environmentVariable('GITHUB_REF_NAME').getOrNull()
+            ?: gitValue(['branch', '--show-current']) ?: 'local'
+        def commit = providers.environmentVariable('GITHUB_SHA').getOrNull()
+            ?.take(7) ?: gitValue(['rev-parse', '--short=7', 'HEAD']) ?: 'unknown'
+        buildLabel = "${branch} at ${commit}"
+    }
+}
+def buildOrigin = providers.environmentVariable('GITHUB_ACTIONS').getOrNull() == 'true' ? 'remote' : 'local'
+def treeState = providers.environmentVariable('DROIDDECK_BUILD_TREE_STATE').getOrNull()
+if (!(treeState in ['clean', 'dirty'])) {
+    def status = gitValue(['status', '--porcelain'])
+    treeState = status == null ? 'unknown' : (status.isEmpty() ? 'clean' : 'dirty')
+}
+buildLabel = "${buildOrigin} ${treeState} · ${buildLabel}"
+def escapedBuildLabel = buildLabel.replace('\\', '\\\\').replace('"', '\\"')
+
+// What the in-app updater compares against the published builds: the commit this build is of (a PR
+// build's head, not the merge CI makes of it), its PR, and whether CI made it at all.
+def sourceCommit = providers.environmentVariable('DROIDDECK_SOURCE_COMMIT').getOrNull()
+    ?: providers.environmentVariable('GITHUB_SHA').getOrNull() ?: gitValue(['rev-parse', 'HEAD']) ?: ''
+def prNumber = (providers.environmentVariable('DROIDDECK_PR_NUMBER').getOrNull() ?: '0').with { it.isInteger() ? it : '0' }
+def ciBuild = providers.environmentVariable('GITHUB_ACTIONS').getOrNull() == 'true'
+// The release key's certificate: a build signed with it, from CI or a computer, updates in place.
+def releaseSigner = rootProject.file('keystore/release-signer.sha256').text.trim()
+// When the source was committed, for "built 3 hours ago": fixed per commit, so it costs no rebuilds.
+def commitTime = (gitValue(['show', '-s', '--format=%ct', 'HEAD']) ?: '0').with { it.isLong() ? it : '0' }
+// tools/release/variants.txt as "package=suffix;...", so the updater picks the apk of the package it runs as.
+def variantSuffixes = rootProject.file('tools/release/variants.txt').readLines()
+    .findAll { it.trim() && !it.startsWith('#') }
+    .collect { def f = it.trim().split(/\s+/); "${f[1]}=${f[2] == '-' ? '' : f[2]}" }
+    .join(';')
+
+android {
+    namespace 'com.droiddeck.launcher'
+    compileSdk 34
+    // The NDK is pinned by property so CI can hand in whatever the runner already has rather than
+    // downloading a second copy; see gradle.properties.
+    ndkVersion project.findProperty('ndkVersion') ?: '27.3.13750724'
+
+    defaultConfig {
+        applicationId "com.droiddeck.launcher"
+        minSdkVersion 26
+        // 28 is not a leftover. An app on targetSdk 29+ runs in a domain that may not execute a
+        // file out of its own data directory, and this app's entire job is to exec a rootfs:
+        // proot, gamescope, the Steam client and everything it launches all live under files/.
+        targetSdkVersion 28
+        versionCode 11
+        versionName "0.3.1"
+        buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
+        buildConfigField "String", "SOURCE_COMMIT", "\"${sourceCommit}\""
+        buildConfigField "int", "PR_NUMBER", "${prNumber}"
+        buildConfigField "boolean", "CI_BUILD", "${ciBuild}"
+        buildConfigField "String", "RELEASE_SIGNER", "\"${releaseSigner}\""
+        buildConfigField "long", "COMMIT_TIME", "${commitTime}L * 1000L"
+        buildConfigField "String", "VARIANT_SUFFIXES", "\"${variantSuffixes}\""
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    signingConfigs {
+        // AOSP testkey (android@android.com), the same key Bannerlator ships with. It is publicly
+        // known, so it proves nothing about who built the apk - what it buys is ONE stable
+        // signature: every build installs over the last one instead of asking the user to
+        // uninstall first. v1 (JAR) + v2 + v3 so every installer and Android version accepts it.
+        testkey {
+            storeFile file("${rootDir}/keystore/testkey.p12")
+            storeType "PKCS12"
+            storePassword "android"
+            keyAlias "testkey"
+            keyPassword "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            signingConfig signingConfigs.testkey
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.testkey
+        }
+    }
+
+    lint {
+        // targetSdk 28 is deliberate and structural: an app on 29+ may not execute a file out of
+        // its own data directory, and executing a rootfs is the whole of what this app does. Lint
+        // fails a release build over it because Google Play will not accept an sdk that old -
+        // true, and not something this app can trade away. Every other check stays on.
+        disable 'ExpiredTargetSdkVersion'
+    }
+
+    packagingOptions {
+        resources {
+            // Kadb's Bouncy Castle artifacts repeat the same multi-release JAR manifest.
+            excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF']
+        }
+        jniLibs {
+            // The PulseAudio daemon is executed from the native library directory and its
+            // libraries are read out of the apk by the class loader: both want the old,
+            // uncompressed-and-extracted layout.
+            useLegacyPackaging = true
+            // Prefer the PTY helper built by this app's NDK target over Termux's prebuilt copy.
+            pickFirsts += ['**/libtermux.so']
+        }
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    testOptions {
+        // Plain JVM tests: a stray android.util.Log call returns a default instead of throwing.
+        unitTests.returnDefaultValues = true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+// Session scripts must follow this checkout even when the native asset bundle is cached.
+// A stale local bundle can omit a newly required helper on a fresh runtime install.
+def stageSessionScripts = tasks.register('stageSessionScripts', Copy) {
+    from(rootProject.file('tools/linuxfs/overlay')) {
+        include 'usr/local/bin/droiddeck-*', 'usr/local/bin/steam-compatibility', 'usr/bin/**'
+    }
+    into(layout.projectDirectory.dir('src/main/assets/linuxfs'))
+}
+tasks.named('preBuild').configure { dependsOn(stageSessionScripts) }
+
+dependencies {
+    // The runtime tarball is a zstd-compressed tar.
+    implementation 'com.github.luben:zstd-jni:1.5.2-3@aar'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    // The UI: every menu, dialog and overlay is Compose. The session's SurfaceView and the
+    // on-screen pad are Views underneath it, which is what they are in every Compose app.
+    implementation platform('androidx.compose:compose-bom:2024.02.00')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.activity:activity-compose:1.8.2'
+    // The File Manager, Bannerlator's: its icon set, image thumbnails and the coroutines it
+    // copies on. Same versions as Bannerlator so the screen stays a straight copy.
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'io.coil-kt:coil-compose:2.6.0'
+    implementation 'com.caverock:androidsvg-aar:1.4'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    // ADB-over-Wi-Fi pairing and authenticated shell client. Users still approve pairing from
+    // Android's Wireless debugging screen; DroidDeck only runs its one fixed setting command.
+    implementation 'com.flyfishxu:kadb-android:1.2.1'
+    // Android terminal view/emulator used by the in-session secondary-display Linux shell.
+    implementation 'com.termux.termux-app:terminal-view:0.118.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.16.1'
+}

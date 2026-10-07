@@ -1,0 +1,114 @@
+Steam client (Linux, arm64) - packages for DroidDeck's local install
+====================================================================
+
+DroidDeck cannot ship Valve's Steam client - it is not redistributable - so a Steam session
+downloads it from Valve's CDN the first time it runs. On a network where that CDN is slow or
+unreachable, fetch the packages here and install them from DroidDeck's Steam settings
+("Steam client" row -> "From folder").
+
+Branch    : steamdeck_publicbeta   (what Deck mode uses; the same client as publicbeta's arm64)
+Version   : 1791249696
+Components: 17 files, 360,276,198 bytes (343.6 MiB) compressed, ~932 MB unpacked
+Taken from: Valve's manifest on 2026-10-07. Valve replaces these files whenever it updates the
+            client, so this list goes stale - `download-steam-client.bat --list` prints the
+            current one, and the tool itself always follows the manifest rather than this list.
+
+Downloading: run `download-steam-client.bat` at the project root. It fills
+FirstLocalInstall\steam-client - alongside the runtime and Proton archives this checkout keeps for
+local installs - with the 17 packages plus the manifest, verifying each one against the manifest's
+sha256, and resumes wherever it left off if it is run again. `--out DIR` puts them elsewhere.
+
+The rest of that folder, which the play page's "First-time local install" button installs in this
+order: linuxfs.tar.zst (the runtime), the Proton <build>.tar.zst, steam-client\, desktop.tar.zst
+(the LXQt desktop) and fonts\ (CJK fonts, copied into the rootfs's /usr/share/fonts/TTF and picked
+up by fontconfig). The desktop's own entry - its download, its size and its sha256 - is in the
+hosted catalog, so what is below is a snapshot of it, not the source:
+
+    https://raw.githubusercontent.com/The412Banner/winlator-contents/main/desktop.json
+
+    id `desktop`, "Desktop (LXQt on labwc)", kind tar, version r1, 426,049,032 bytes
+    https://github.com/The412Banner/winlator-contents/releases/download/steamdeck-desktop-r1/desktop.tar.zst
+    sha256 c2bb860b3b1688287451e2495be5db313ec07f8c8af501dfac2768a9f417bc86
+
+From a network that cannot reach github.com, the same file comes through one of the app's
+accelerators - `https://gh-proxy.com/<url above>` was the fastest of them on 2026-10-07.
+
+The button that offers all of this belongs while the device is short of any of it. The runtime,
+Valve's Proton and the client always count; the rest is read off the folder the last run came
+from, which the app remembers - while that folder still holds something the device has not got
+(the desktop, fonts, a third-party Proton) the button stays, and it goes once everything in it is
+in. With no folder remembered - none picked yet, or the one picked taken off the device - the
+desktop's own check stands in.
+
+The folder is handed to the runtime's droiddeck-steam-install, which reads the manifest, uses
+every component it finds in the folder and downloads only the rest. Each file - local copy or
+download - is checked against the sha256 in the manifest, so a truncated or renamed file is
+rejected rather than installed. Nothing needs to be renamed by hand: the file names below are
+the names the manifest itself uses.
+
+
+Manifest (also worth copying into the folder - it lets the install run with no network at all)
+-----------------------------------------------------------------------------------------------
+
+https://client-update.fastly.steamstatic.com/steam_client_steamdeck_publicbeta_linuxarm64
+
+
+Direct links
+------------
+
+https://client-update.fastly.steamstatic.com/webkit_linuxarm64_linuxarm64.zip.c1d5fa58a564375f71b34bccaa51c19be1143137
+https://client-update.fastly.steamstatic.com/bins_linuxarm64_linuxarm64.zip.f5c3875d16d67b4a3537ccd7b1f9bec8dd056417
+https://client-update.fastly.steamstatic.com/steamui_websrc_all.zip.759bb08edbfa27aa53d8655d694726478341bf7d
+https://client-update.fastly.steamstatic.com/public_all.zip.10426d0860e311f024654d1f932d4434e6d55a92
+https://client-update.fastly.steamstatic.com/bins_sdk_linuxarm64_linuxarm64.zip.8d18a0e1f855db6a831a1c8ce5556e878d4dd5a1
+https://client-update.fastly.steamstatic.com/codecs_linuxarm64_linuxarm64.zip.b27e1d78cec034a8c73b0ff1bc6acbe3b8586344
+https://client-update.fastly.steamstatic.com/steamui_websrc_movies_all.zip.40e78cdda48e9a8a74baf614e0cdc7a6b96d26d1
+https://client-update.fastly.steamstatic.com/sdl3_linuxarm64_linuxarm64.zip.75732da4e1c0b47b972c6d5f8eb08a88abffa738
+https://client-update.fastly.steamstatic.com/tenfoot_images_all.zip.86419c7a56c12dd107b5e0d46f50c8a9b121f3cc
+https://client-update.fastly.steamstatic.com/steamui_websrc_sounds_all.zip.74727ca40ef88c5012bb631488fd285418dce825
+https://client-update.fastly.steamstatic.com/resources_misc_all.zip.99ed79ed868d732d8e9e9a45444b8f003191e3dd
+https://client-update.fastly.steamstatic.com/resources_all.zip.213fe769fd8484a0d149453c5655e70c1d13b086
+https://client-update.fastly.steamstatic.com/strings_all.zip.ad0779a3a2612ae06fe66604b121245d3905fd12
+https://client-update.fastly.steamstatic.com/bins_hardware_all.zip.cbce77b1f8c263c26e2af78e68a1d81736432a8e
+https://client-update.fastly.steamstatic.com/strings_en_all.zip.e716a67d7fa91ba70490a6417e25d45c5435e393
+https://client-update.fastly.steamstatic.com/resources_hidpi_all.zip.a110d78e994c028dc1c412951e87a0c4e9c819f7
+https://client-update.fastly.steamstatic.com/resource_linuxarm64_linuxarm64.zip.6e5691ac5a1a55a554250468a98c3f8e454fea4a
+
+
+Checksums
+---------
+
+  bytes      sha256                                                            file
+  ---------  ----------------------------------------------------------------  ------------------------------------------------
+  111396433  b8687e0f20668d24055d8f2e9f6c4fbcbe84fbb99a7bc9de4595530be7029990  webkit_linuxarm64_linuxarm64.zip.c1d5fa58a564375f71b34bccaa51c19be1143137
+  110349104  e2e4e24a34e7fc5607ae0483618535c006d016c56105501d8abef954c7b57a2e  bins_linuxarm64_linuxarm64.zip.f5c3875d16d67b4a3537ccd7b1f9bec8dd056417
+   35558917  47b86c7ff4c5a73eda3c273ad0ac1689b1e4d3226d09350f42493741d08780af  steamui_websrc_all.zip.759bb08edbfa27aa53d8655d694726478341bf7d
+   31197775  3cbb29584059934c95145400304319ca9a4a47d54a4978c6ecac1cfad2357847  public_all.zip.10426d0860e311f024654d1f932d4434e6d55a92
+   15910048  c4edf4826e21aa37bfda1ffe24929ee017910677ab0b43b391592c4b873e8370  bins_sdk_linuxarm64_linuxarm64.zip.8d18a0e1f855db6a831a1c8ce5556e878d4dd5a1
+   11186125  8e77a5e4605d7c7b576ce64abf39cfd342aea8d6783e17f2fb91e1c8f4357a0f  codecs_linuxarm64_linuxarm64.zip.b27e1d78cec034a8c73b0ff1bc6acbe3b8586344
+   10900690  885a32533327f0fd5ea98e6c6f13552e965cab4852dad7ce9ccf3d929d726b5b  steamui_websrc_movies_all.zip.40e78cdda48e9a8a74baf614e0cdc7a6b96d26d1
+    9307438  e99c295a01e500d6f92aa09e5bd5057e77ca23dc274311de2ffd99cf5b54b4ac  sdl3_linuxarm64_linuxarm64.zip.75732da4e1c0b47b972c6d5f8eb08a88abffa738
+    6582204  990676bc29d01736477c6b571b5048258a6156284ef242503112fc68567cbf01  tenfoot_images_all.zip.86419c7a56c12dd107b5e0d46f50c8a9b121f3cc
+    4676203  c823bd39d234e7d9a5fdb5ec6605eae3f175e52bb847725e8826ff526a61641c  steamui_websrc_sounds_all.zip.74727ca40ef88c5012bb631488fd285418dce825
+    4317962  187e562403c7544af7162e08baf7677d030ad6f60947c2cdc7dcbcbf0a7a7fe6  resources_misc_all.zip.99ed79ed868d732d8e9e9a45444b8f003191e3dd
+    4301386  769840cdb2b22ad9798a1a3950de2fe82b8b5d3d37389dcc9b1393f77480d67b  resources_all.zip.213fe769fd8484a0d149453c5655e70c1d13b086
+    4014754  5a5370f3b16675cc39d928d8557ff42f4f6caa427ea4d6bc7f98ee31d8ef9513  strings_all.zip.ad0779a3a2612ae06fe66604b121245d3905fd12
+     362267  c4c8cdcad2cc88fbf1514603cabf571c6fcaaf5b4f92899fcadc5a18959046c0  bins_hardware_all.zip.cbce77b1f8c263c26e2af78e68a1d81736432a8e
+     114150  0c56193fac4fa518eaaac0dc66ecd21a3cee510ece85594b6c308f8d31ee98a3  strings_en_all.zip.e716a67d7fa91ba70490a6417e25d45c5435e393
+      98371  5bdb97ec734f035c1d06a59b62980028b1b05b920c544ae3673b1a515d3d507e  resources_hidpi_all.zip.a110d78e994c028dc1c412951e87a0c4e9c819f7
+       2371  f78280db38d95a74096a00f7d2bc3061286db135e9e61bbf963eb65de39d66fc  resource_linuxarm64_linuxarm64.zip.6e5691ac5a1a55a554250468a98c3f8e454fea4a
+
+
+Using it
+--------
+
+1. Put all 17 files (and the manifest, if the device has no network at all) in one folder - any
+   name, any location, but flat: the install reads that folder's own entries, not subfolders.
+2. Copy the folder to the device, e.g. /storage/emulated/0/Download/steam-client.
+3. DroidDeck -> Steam settings -> Steam client -> "From folder", and pick it.
+4. The install needs about 2 GB free: the client unpacks to a little under 1 GB, and one
+   component's zip sits beside it while it is being unpacked.
+
+The row only appears while the client is missing. Repairing a client that is already installed
+is the "Repair Steam client" button above it - but note that a repair re-downloads from Valve
+rather than from the folder.

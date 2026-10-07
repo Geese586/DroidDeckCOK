@@ -1,0 +1,383 @@
+# DroidDeck - Progress Log
+
+Running engineering log for the DroidDeck app (`com.droiddeck.launcher`; called SteamDeck,
+`com.steamdeck.launcher`, until 2026-09-23 - entries below that date keep the old name). Newest state first, then
+the timeline, then lessons and backlog. Companion to the README (what the app *does*) and to
+`docs/releases/` (what each version said) - this is *how it got here and where it stands*.
+
+---
+
+## 2026-09-29 - `feat/controller-input`: the pad the way SteamOS has it
+
+Device-tested on the AYN Thor (Katamari under Proton Experimental ARM64).
+
+- **Why**: the client read the pad as an Xbox 360 controller, and games read the *same* node
+  wearing Steam Input's virtual identity (28de:11ff), because the client's own virtual pad needs
+  `/dev/uinput` and never appeared. Steam Input's layouts therefore never reached a game, and the
+  QAM was a timed Guide+A chord. InputPlumber itself cannot run in the sandbox (root, uinput, uhid,
+  udev, D-Bus), so what it provides is emulated in the interposer instead.
+- **`/dev/uinput` stand-in** (`FAKE_EVDEV_UINPUT=1`, libfakeinput): a gamepad the client makes
+  becomes `/dev/input/event16+`, backed by a ring of the app's own format, with the client's name,
+  ids and bits; its writes are that ring's events. Other devices (virtual keyboard and mouse) are
+  accepted and dropped. `inputudev.c` describes these nodes to Wine's HID bus from a `.uevent` file
+  beside each one, and while one exists describes the app's pads as the Xbox 360 pad they are, so
+  Wine reads only Steam Input's output. Verified: the client makes "Microsoft X-Box 360 pad 0",
+  re-makes it at game launch, and the game binds it (`Controller 0 uses xinput : true`).
+- **Steam Deck controller** (`FAKE_EVDEV_DECK=1`, Steam sessions): `/dev/hidraw16`, found through a
+  sysfs tree `SteamDeckPad.kt` binds in (usb_device → interface 2 → hid 28de:1205 → hidraw), streams
+  the Deck's 64-byte state report every 4 ms from ring 0 and answers feature reports as InputPlumber
+  does. systemd 261's libudev refuses a syspath not on sysfs, so `fstatfs`/`statfs` report sysfs
+  for that tree. The app's evdev nodes are withdrawn while it is on, and only the `steam` process
+  sees the Deck. QAM is a real button (snapshot bit 11). Verified: the client lists a Steam Deck
+  Controller (V1 HID protocol) and runs its handshake (0x83, 0xAE, 0x81/0x87 lizard off, 0x8F).
+- **Setting**: Steam page → Touch & controls → **Controller**: *Steam Deck controller* (default) or
+  *Xbox 360 controller* (the pad of earlier versions, QAM by Guide+A; games still get Steam Input's
+  virtual pad). Debug switches: `droiddeck-no-uinput` (back to the 28de:11ff disguise),
+  `droiddeck-no-deck-pad` (forces the Xbox 360 pad).
+- **Gyro**: `PadMotion.kt` feeds the handheld's own gyro and accelerometer (4 ms sampling, while
+  the session is on screen) into an IMU block after ring 0's events, turned to the screen and then
+  to the Deck's axes and units; the Deck report carries them. Verified: Steam's Gyro Calibration
+  page moves with the Thor (sh5001 IMU); at rest the accelerometer reads 1 g.
+- **Deck grips + trackpads on the second screen** (`DeckControlsPanel.kt`, offered while the pad
+  is a Deck controller): tabs for the four grips (2x2), either trackpad with a click bar, and both
+  trackpads over the grips in a row; a second finger on a trackpad clicks it. True black for OLED.
+  Grips, pad positions, touch, click and pressure go through the same block after ring 0's events
+  as the gyro (`DeckControls.kt`) into the Deck report.
+- **Not yet**: a Bluetooth pad's own IMU (DualSense); the
+  game's rumble on the virtual pad goes straight to the vibrator rather than back through the client.
+- **Prior art checked**: WinNative and Bannerlator never emulated uinput or hidraw; Bannerlator's
+  `-steamdeck` mode stopped at "the virtual pad never arrives", which is this missing uinput.
+
+## 2026-09-25 - main `8cdedbe`: melonDS out of the box, touch in Big Picture, log privacy, Decky
+
+State: **main = `8cdedbe`** (PR #22 merge). Device-tested on the AYANEO Pocket FIT (repacked test builds)
+unless marked. gamescope now staged from release **`gamescope-3.16.29-p3`**.
+
+- **PR #18 → `9369dc3`** (`feat/melonds-preset`) - melonDS and the session:
+  - **melonDS preset** (`bannerlator-pad-defaults`): the top screen as big as the panel allows with the bottom
+    screen alone beside it, centred (Horizontal + Emphasize top; Hybrid repeats the top screen), sharp pixels;
+    full screen from the front end (`-f`) at the panel's own resolution; the guide button toggles full
+    screen, leaving to a 1x-wide 16:9 window whose menus gamescope stretches to a usable size; DS/DSi BIOS,
+    firmware and NAND found in `ROMs/nds/{bios,firmware}` (BIOS by checksum). Existing installs moved once.
+  - **Desktop**: `QT_QPA_PLATFORM="wayland;xcb"` (the melonDS AppImage ships only xcb and exited at once);
+    a labwc window rule opens melonDS at 800x600, centred.
+  - **HUD** follows the game window, not gamescope's 1x1 cursor or Qt menus (read 0 fps at 60).
+  - **Cursor**: hides on pad / on-screen-control input (Bannerlator's 1.2 s rule), and shows the program's own
+    shape - labwc's resize arrows, I-beams, a hide (Bannerlator's `wl_pointer.set_cursor` port; new here:
+    labwc's GPU cursor is a UBWC dma-buf, read back through `vkp_image_readback`).
+  - **Steam desktop switching**: "Steam Desktop UI" opens the desktop with Steam's desktop client in it (under
+    gamescope the client picks Big Picture regardless); the drawer's **DESKTOP** button does it from Big
+    Picture; relaunches restart the singleTop activity in place (`startActivity` from it was swallowed).
+    Big Picture's own Power → Switch to Desktop still hangs: it waits on SteamOS Manager before its
+    `steamos-session-select` fallback (stub included; a session bus did not help - tried and reverted).
+- **PR #19 → `ce0da01`** (`fix/log-privacy`) - no credentials or identities in session logs: the device's
+  public addresses (the client's IPv6 check logs "external address" ~20x a session), `network.txt` addresses
+  as their kind and the MAC masked, every Steam AccountName/PersonaName (plain account names leaked in the
+  UI log's login lines), and every text file scrubbed at session end and in the share-logs zip. Verified:
+  0 hits across 83 session folders.
+- **PR #16 → `5270574`** (Decky Loader, Kurt) - merged with the Steam CEF debugging marker tied to the
+  supervisor toggle (it was created at install; on Android any app can reach 127.0.0.1:8080 - proven from
+  another uid). Decky's own updater still points at the official project (no ARM64 build there).
+- **PR #20 → `036317f`** (Kurt) - local builds carry the CI payload (NDK proot, patched gamescope).
+- **PR #22 → `8cdedbe`** (`feat/steam-touch`) - touch in Big Picture: gamescope `0110` binds `wl_touch` in the
+  nested backend and feeds wlserver's touch path (Big Picture sets Passthrough: tap and swipe rows as on a
+  Deck); `0111` makes the nested pointer warp in Passthrough (touchpad mode: hover and tap-to-click work);
+  the compositor's pointer fallback no longer jams on a lost finger-up.
+- **In design, not built**: the drawer's page dots as QAM-style icons (Display / Controls / Settings), the
+  selected one "stepping forward" in a line; mock `droiddeck-drawer-tabs-preview.html`.
+
+## 2026-09-24 (afternoon) - main `94f9935`: PS1, controller focus, own signing key, CI hardening
+
+State: **main = `94f9935`** (PR #41 merge), main build run 36036219740 - the first one signed with
+DroidDeck's own key (`droiddeck-signed-standard`). No tag, no release since 0.1.6. Device-tested on
+the AYANEO Pocket FIT unless marked. **main is now protected** (below).
+
+- **PR #34 → `63d7051`, PR #38 → `c7998a8`** (`feat/duckstation`, `feat/duckstation-play`) - PS1 and the front end:
+  - **DuckStation like ARMSX2**: Player 1 on the controller, BIOS from `ROMs/psx/bios`, `psx` as the game
+    list, Vulkan, guide → pause menu, `-batch -bigpicture -fullscreen` from the rail. Crash Bandicoot and
+    Tekken 3 at 60 fps from the desktop and from the front end.
+  - **One tap to play**: DuckStation's and ARMSX2's first-time setup is answered for the user
+    (`SetupWizardIncomplete = false`); ARMSX2 names its BIOS dump itself (`[Filenames] BIOS`, a US dump
+    first, re-checked before every launch) - PCSX2 needs a named file, DuckStation finds one in its folder.
+    DuckStation no longer warns it cannot inhibit a screensaver (no `org.freedesktop.ScreenSaver` here).
+  - **One tile per disc**: a `.cue`/`.gdi`/`.m3u` hides the files it names (Tekken 3 showed 4×, one per
+    `(Track N).bin`); `bios`/`firmware` folders are skipped (the BIOS showed as a game).
+  - **Controller focus**: the rail item is outlined on open (an app starts in touch mode, where clickables
+    refuse focus - the app now asks for keyboard mode first); Right enters a page on its main button,
+    Left from the page's edge returns to the rail, Right again returns to the tile or button last used
+    (explicit tracking - `FocusRequester.saveFocusedChild` restored into the grid, not the tile); a page
+    opened from a tile takes focus on its main button (focus used to vanish with the tile and the next
+    press landed on Steam); Down from a page's buttons goes to the first tile.
+- **PR #41 → `94f9935`** (`feat/release-signing`) - signing, file access, hardening before going public:
+  - **Own signing key** (RSA 4096, made on device by `tools/release/make-release-key.sh`, digest
+    `b241ea7d…5d3f0` in `keystore/release-signer.sha256`). Every build before it - 0.1.6 included - was
+    signed with the public AOSP testkey, so anyone could sign an "update" that installs over DroidDeck.
+  - **Hand-over** (APK Signature Scheme v3 rotation): v1/v2 by the testkey, v3 by our key with a lineage
+    testkey → ours, testkey rollback off, `--rotation-min-sdk-version 28`. Proven on the FIT with a throwaway
+    key and package: a 0.1.6-style install updates and keeps its data; an apk signed with the testkey alone
+    is refused; so is one with an attacker's own lineage from the testkey; an apk signed with our key alone
+    (what MT Manager / APK Tool M make) installs over a hand-over install and fresh, not over a testkey one.
+  - **CI**: `sign.yml` (reusable, a matrix job per package) runs after every non-pull-request build
+    (environment `signing-main` on main, `signing-branch` elsewhere; the key is an environment secret).
+    `release.yml` (dispatch, version) signs the exact Build APK artifact of a main commit as four packages:
+    `com.droiddeck.launcher`, `com.tencent.ig`, `com.antutu.benchmark.full`, `com.ludashi.benchmark`
+    (`tools/release/variants.txt`; the manifest rename also covers `.documents` and the `.home` task affinity).
+  - **Documents provider** (`files/AppFilesProvider.kt`): the app's data folder in Android's file picker
+    ("Open from" → DroidDeck, per-package title), confined to the data folder (a `../` id is refused, links
+    out of it are hidden), and deleting never follows a link.
+  - **Hardening**: pull requests build with `pull_request`, not `pull_request_target` (a pull request could
+    write the caches main's signed builds restore); a build fails if a private key file is committed;
+    `.gitignore` covers key files; **main is protected** - pull request + passing `build` + one approval,
+    no force-push or deletion, the owner can override for his own pull requests. History scanned before
+    going public: no secrets.
+  - Max and Kurt get the key (jks, p12, pk8 + x509.pem, lineage) with a password and three plain guides
+    (MT Manager / APK Tool M signing, the hand-over, how pull requests / test builds / releases work).
+- **Also merged today** (Kurt): #20 Back shortcuts (session menu, Steam QAM), #24 build identity on the
+  launcher, #33 per-launch Android display choice, #35 CI build-cleanliness snapshot, #37 the split-D logo,
+  #40 faster held-stick navigation in the session drawer; (The412Banner) #32 stretch games to fill the
+  screen, Quake-engine titles windowed at the session's size.
+
+## 2026-09-24 - main `08a6769`: GPU desktop, emulators like PS3, ARMSX2, game art
+
+State: **main = `08a6769`** (PR #29 merge), main build run 35983098806, staged as `Download/DroidDeck-main-08a6769(-Genshin).apk`. No tag, no release since 0.1.6. **Device-tested on the AYANEO Pocket FIT** (Adreno 750) unless marked.
+
+- **PR #25 → `f6f7470`** (`feat/desktop-gpu`) - the desktop on the GPU:
+  - **Patched wlroots** (`tools/wlroots`, release `wlroots-0.20.2-p1`, staged at `/usr/local/lib/droiddeck-wlroots`): a Vulkan DMA-BUF allocator for the KGSL stand-in node, which is not a DRM device - stock wlroots failed at `drmModeCreateLease` → "unable to create allocator"; linux-dmabuf skips its GEM import check on such a node. labwc's **vulkan** and **gles2** renderers start; **vulkan is the default**.
+  - Compositor: a toplevel's **initial commit is answered with a configure** (labwc on vulkan waited for ever - wlroots moves its toplevel to a private queue after that commit); **`xdg_positioner` / `xdg_popup` / `wl_output` requests no longer abort** the app (NULL implementations; a gamescope beside labwc took the app down); without a Wine desktop a new window takes the keys.
+  - Fallback: labwc that exits or does not answer its socket within 20 s → pixman, remembered per renderer + wlroots md5 + driver (`~/.droiddeck-renderer-failed`, cleared by choosing a renderer). On pixman, Game/Emulator menu entries run through `droiddeck-gpu` (their own gamescope on wayland-0).
+  - Emulators: the pad is a plain Xbox 360 controller outside Steam (SDL ignores Steam's virtual gamepad outside Steam); `bannerlator-pad-defaults` seeds Player 1 per emulator (source-verified formats) and never overwrites a user's profile; big-core pinning (`program_cores`, game cores when chosen); rail programs use the desktop's Linux driver (one shader cache); RPCS3 moved once to `Async Recompiler (multi-threaded)` (no 6650-variant interpreter precompile each boot).
+  - **PC keyboard** (drawer: Keyboard [Hardware] [Android]): Esc, F1-F12, editing block, modifiers (sticky), arrows; real evdev key presses; 47% of the screen.
+  - Proven: Vulkan and gles2 desktops, Firefox on Vulkan, RPCS3 God of War II HD in a window and from the rail (pad bound, no precompile, cores 2-7), pixman fallback path, Steam session.
+- **PR #26 → `6980428`** (`feat/armsx2`) - **PS2 is ARMSX2** (PCSX2 fork with ARM64 recompilers, GPL-3.0). Upstream PCSX2 only has `pcsx2/arm64/RecStubs.cpp`: NFS Underground 2 ran at 17 fps with one core at 100%; ARMSX2 runs it at **59.9 fps / 100%**, all recompilers + fastmem on under proot. PCSX2 left the front end and the catalog.
+- **PR #29 → `08a6769`** (`feat/armsx2-polish`):
+  - ARMSX2 from the rail: `-batch -bigpicture -fullscreen`; guide → pause menu → Close Game returns to the app. First run: PCSX2 settings + memory cards copied once; a new player gets ARMSX2's setup with the BIOS folder in `ROMs/ps2/bios` (or `ps2/firmware`), `ps2` as game list, Vulkan, controller on Player 1. Users bring their own BIOS and games.
+  - Catalog `pages` - a file per memory page size; ARMSX2 4K + 16K.
+  - On-screen controls: Auto for rail games and Steam when no controller, off on the desktop; setting in the drawer everywhere; drawer headed by the emulator for rail games.
+  - Front end: Back/B steps back a level (emulator → Desktop, game → emulator) instead of leaving the app; games found up to 3 folders deep (`ps2/games/<game>/`); **box art** (libretro-thumbnails by name exact/loose, xlenore/ps2-covers by PS2 serial, GameTDB by GC/Wii ID, PS3 discs' own `ICON0.PNG`), kept in `files/covers`; wide art shown whole over a blurred copy; titles without dump tags.
+- **winlator-contents** (the catalog): ARMSX2 `nightly-20260923-92aa2174da` mirrored (`armsx2.AppImage` 4K, `armsx2-16k.AppImage`), PCSX2 dropped from `desktop.json` (PRs #12, #13); the mirror workflow lists only the file being added (a re-run re-fetches and clobbers every listed file, and DuckStation's upstream link moves).
+- **Not yet device-played**: DuckStation, Dolphin, Cemu, melonDS, PPSSPP, RetroArch (profiles + covers written from their sources). Known gap: a keyboard's Esc does not open ARMSX2's pause menu in a rail game (guide does).
+
+## 2026-09-23 (evening) - renamed SteamDeck → DroidDeck
+
+- **App name, app ID and code package**: DroidDeck, `com.droiddeck.launcher` (was `com.steamdeck.launcher`), sources under `app/src/main/java/com/droiddeck/launcher`, the 68 JNI functions renamed with them. A new app ID means DroidDeck installs **beside** SteamDeck, not over it: the runtime, the Steam sign-in and the settings start fresh.
+- **Downloads**: session logs go to `Download/DroidDeck/`; the switch files are `droiddeck-env`, `-osc`, `-driver`, `-tu-debug`, `-no-pad`, `-pad-log`, `-no-hud`, `-wlr-renderer`. The old `steamdeck-*` names are not read.
+- **Inside the runtime**: `droiddeck-desktop`, Firefox's `droiddeck.js`, `~/.droiddeck-desktop-debug`, `~/.cache/droiddeck`, the shortcuts tag `droiddeck-app`, `X-DroidDeck-AppId`, the `droiddeck-rumble` socket. "Desktop installed" now tests for `usr/bin/labwc` (it tested for the launcher, which the app stages itself).
+- **Kept on purpose** - Valve's Steam Deck: the `-steamdeck` flag, `steamdeck_publicbeta`/`steamdeck_stable`, "Steam Deck mode", `steamdeck-packages.steamos.cloud`. And names inside the hosted desktop package: `steamdeck.png`, `steamdeck-steam(.desktop)`, `steamdeck-bigpicture.desktop` (renaming them means re-hosting it).
+- CI artifact `droiddeck-apk`; a stray committed `__pycache__/*.pyc` removed.
+
+## 2026-09-23 (afternoon) - main `90c7574`: first-run onboarding, Desktop & apps page, 4:3 display
+
+State: **main = `90c7574`** (PR #14 merge), main build run 35895701784. No tag, no release; next version is still open. **Nothing below is device-tested** except the audio default (Kurt, AYN Thor).
+
+- **PR #11 → `f79dc2d`** (`fix/directaudio-default`): the Steam client's audio is back on the 0.1.5 classic sink by default (`module-aaudio-classic-sink.so`, byte-identical to 0.1.5's arm64 module); DirectAudio is a choice in the Steam cog ("Steam client audio", pref `clientDirectAudio`, default off). Games keep DirectAudio on by default; mic on by default, RECORD_AUDIO asked once. Old armhf sink out of the bundle; the bundle re-unpacks when its contents change (stamp = BUNDLE_STAMP + CRC32 of pulseaudio.tzst). Relay logs a heartbeat line; Setup › Session logs › Share latest logs. Kurt on the Thor: classic "works perfectly".
+- **PR #12 → `0ddb0be`** (`feat/play-installs-runtime`):
+  - `586c9c2` Play and Desktop UI are enabled with no runtime; the session's loading screen downloads, checks and unpacks it ("downloading the Linux runtime · 332 of 791 MB"), then starts the session. A failure ends on the loading screen with the reason.
+  - `f437957` Desktop does the same: the runtime if missing, then the `desktop` package from `desktop.json` (426 MB), then LXQt. Play, Desktop UI and Desktop all give the non-Adreno warning before any download (`MainActivity.startSession`).
+  - `cbd3bc9` Desktop & apps is a page in the pane (pageKey `apps`), not a dialog: a rail-style dropdown per tier with an installed/total pill (Native ARM64 open), per-package Install/Remove, and the installing package's step line and bar in its own row. Leaving the page does not stop an install.
+- **PR #14 → `90c7574`** (`fix/exact-panel-shape`), from a user report on a 4:3 handheld (RP Nova) - "the panel's shape" still gave 16:9:
+  - Cause: `SessionActivity` sized the display at `maxOf(panel aspect, 16:9)` (the foldable guard), so on a 4:3 panel both choices were 16:9 with bars.
+  - `9c47095` Shape › **Exactly this panel (4:3, 3:2…)** - the panel's own aspect, no floor. The other two unchanged; foldables still default to 16:9. In the cog and the in-session menu (`SessionPrefs.shapeChoices`).
+  - `ad2f9f8` Resolution › **Custom…** per mode (`customRes.<mode>`, 320×240-3840×2160, evened) with 4:3 / 16:10 / 16:9 presets. It replaces the cap and the shape (Shape greys out); picking a cap clears it; the device report lists it. Not in the in-session menu.
+  - Note: the branch was cut from `cbd3bc9`, not `0ddb0be` - same tree.
+- Staged: `SteamDeck-play-installs-runtime-586c9c2.apk` (`21460acd…`), `…-f437957.apk` (`174e74a6…`), `SteamDeck-apps-page-cbd3bc9.apk` (`c2cfbebe…`), `SteamDeck-custom-res-ad2f9f8.apk` (`d02ee5ce…`, = main's content). HTML preview of the onboarding flow: `/sdcard/Download/SteamDeck-onboarding-preview.html`.
+- CI note: a branch push does not build (`build.yml` = main + PRs); dispatch it with `gh workflow run build.yml --ref <branch>`. A newer dispatch on the same branch cancels the older run.
+- Open: Kurt's PR #13 "Add Steam second-screen controls" (`steamdeck-second-screen`) - not reviewed; now needs to merge onto `90c7574`.
+- **Next:** (1) fresh-install pass: uninstall, install, press Desktop first (runtime + desktop, ~1.2 GB), then Play with no download; (2) the Desktop & apps page on device (dropdowns, in-row bar, Back mid-install); (3) the Nova reporter tests Exactly this panel / Custom 960×720; (4) PR #13.
+
+## 2026-09-23 - branch `feat/armada-and-lineage`
+
+- Steam Deck mode: `-steamdeck` only; SteamOS helper stubs staged from the apk under `/usr/bin` and `/usr/bin/steamos-polkit-helpers` (the missing `steamos-update` there was the "Update Error" dialog; `jupiter-dock-updater --check` answers 7 so no dock firmware row); Deck mode defaults the `steamdeck_publicbeta` channel (on `publicbeta` every start reinstalled the client and lost the launch URL); client branch row in the Steam cog.
+- QAM battery: `session/BatteryComponent.kt` writes BAT0/BAT1 from BatteryManager, bound over `/sys/class/power_supply`. Cloud saves checked on device: in sync, nothing was broken.
+- Added games: any number of Games folders, each bound under `/root/Games`; one shortcut per subfolder in the client's `shortcuts.vdf` under the ARM64 Proton; exe choice per game; art from the folder, else Steam's store (capsule, header, hero, logo) copied into the client's grid.
+- gamescope: the runtime's 3.16.29 rebuilt in CI (`tools/gamescope`, release `gamescope-3.16.29-p1`) with Armada's ARM64 client fixes, a realtime-queue switch and the gamepad cursor fix; staged over `/usr/local/bin`. Game windows forced fullscreen in Steam mode (a game came back in the top-left corner after the Steam menu).
+- Audio: own PulseAudio sinks in `tools/aaudio-sink`, built into the bundle by CI. With DirectAudio on, the client's sound goes through the relay's shared ring (`module-directaudio-sink`, sink named DirectAudio); off, `module-aaudio-sink`. Inside proot AAudio only gave 20 ms bursts, the relay gets 4 ms.
+- Winlator code rewritten or removed (SessionPart, HostEnvironment, HostProcess, PadState, cpp/framegen); rumble now served by `session/RumbleComponent.kt`.
+- Front end shelf laid out whole so the d-pad reaches every tile.
+- Hosted runtime and desktop packages untouched.
+
+##  0.1.5 RELEASED 2026-09-23 03:17 - known-good point
+
+- **Tag `0.1.5` = `d2f4a84`** (bump commit, versionCode 6), notes `docs/releases/0.1.5.md` on main after it. Private release [0.1.5](https://github.com/The412Banner/SteamDeck/releases/tag/0.1.5) and public [`SteamDeck-0.1.5`](https://github.com/The412Banner/winlator-contents/releases/tag/SteamDeck-0.1.5) on winlator-contents, both Latest, asset `SteamDeck-0.1.5.apk` 21,093,959 bytes, sha256 `85b42954…`, run 35813465422. Staged as `/sdcard/Download/SteamDeck-0.1.5.apk`.
+- What went in since 0.1.4 (58 commits): the motion front end, settings as pages with anchored menus, the session drawer, three themes (Paper default) and the new icon, run-as-a-game + libpci fix (117 fps Big Picture on a Fold), client-interface switches, FEX presets, 720p default, TZ, non-Adreno gate, 16 KB app libs, two on-screen sticks + bar-aware layout, folded categories at launch, Kurt's #3 (Back key) / #4 (icon) / #5 (local build helpers), pull-request CI + contributions ledger.
+- Untested at release: sticks/bar layout, FEX presets, Deck mode, desktop → Steam hand-off, the `perf:` line. Rollback: `git reset --hard 8e58e8e` (0.1.4) + `SteamDeck-0.1.4.apk`.
+- After the cut: the public release on winlator-contents got the private title, and that repo's README a SteamDeck section (latest release, `linuxfs.json`, `desktop.json`) - refresh both at every cut. Verified on the FIT's client binary: there is no `-steampal` flag; the Deck flags are `-steamdeck` / `-steamos3` (Deck mode on the Performance page), `-gamepadui`, `-steamos`.
+- **Next, in order:** (1) device pass of 0.1.5 - sticks in a game and the bar layout on the Fold, the `perf:` line and 720p in a session log, a FEX preset, the desktop → Steam hand-off; (2) decide the stick click gesture (double tap or long press); (3) Kurt's draft PR #1 (Decky installer) builds when he marks it ready - it compiles against main, minus two stray `.kotlin` files; (4) rebuild the six PulseAudio prebuilts 16 KB-aligned; (5) optional FIFO/mailbox switch on the compositor's Vulkan present path; (6) the rename away from Valve marks is still open (icon is now the "A").
+
+## 2026-09-22 (late) - motion front end + run-as-a-game, branch `feat/frontend-motion` (unmerged)
+
+- Front end rebuilt around a motion system (`ui/FrontEndScreen.kt`, same state/actions API): the rail's selection is one pill that springs between rows; sub-lists unfold and stagger their children; a page change sinks out and cascades in over a blurred wash of the selection's art; tiles lift/ring/shine on focus and pop a play badge; the launch button sweeps a sheen and squashes on press; the session activity rises over the front end (`res/anim/session_*`). Durations follow the system animator scale.
+- The session now runs as a game: manifest `appCategory=game` + `game_mode_config` (Performance mode welcome; the OS FPS cap and downscaling refused), sustained performance mode, the panel's fastest mode at its size, GameManager game state, and an ADPF hint session over the compositor thread fed with each presented frame's interval (`session/PerfMode.kt`, `session/PerfHints.kt`, `nativeCompositorTid`). One `perf:` line in the session log says what took on the device.
+- App libraries link 16 KB-aligned. Still 4 KB-only (prebuilt, need a rebuild): libpulse, libpulseaudio, libpulsecommon-13.0, libpulsecore-13.0, libsndfile, libltdl.
+- The session's display caps at 720p by default now, client and desktop alike (`SessionPrefs.defaultResolutionCap`); a cap the user chose still wins. The cog's list marks the default per mode.
+- Builds: r1 `7ddfb57` (motion only), r2 `546c063` (+ run-as-a-game), r3 `d1ced87` (+ client 720p), r4 `fb2a3d4` (+ desktop 720p) - all CI-green, none device-tested. Staged as `SteamDeck-motion-r1..r4.apk`; r4 has everything.
+- r5 `1ba803b` + TZ in the guest; r6 `39272cf` Setup folds, "Linux desktop environment", help link above the grid (r4 seen running on the FIT); r7 `af3f377` settings without a pop-up: the cog and Performance are pages in the pane with anchored menus under each value, frame generation / logs / offline open in place on the rail. **r7 merged fast-forward to `main` (`af3f377`) and main's auto-build staged as `SteamDeck-r52.apk`; no tag, no release.**
+- r8 `90ff23a` (branch only, unmerged): the session drawer in the front end's dress with the same rows and menus (Now / Next session / leave), FEXCore presets carried over from Bannerlator (`core/FexPreset`, Steam settings page + drawer, FEX_* into the Steam session's environment; default = FEX defaults as before), file manager and picker locked to landscape.
+- Collaborators: `maxjivi05` (push) and `xXJSONDeruloXx` (push, invited 2026-09-22) on the private repo.
+- CI for pull requests (2026-09-23 early): `Build APK` runs on `pull_request_target` against main (a conflicting pull request never fires `pull_request`), checks the pull request out at its head with full history, merges main itself, and leaves one comment kept current: mergeable + built (apk on the run), or the conflicting files and hunks, or the compiler's errors from the kept Gradle log. Drafts wait. Fork pull requests may run without approval (repo setting). Proven with a throwaway pull request (#2, closed) both ways. `Contributions ledger` rewrites the README's contributors table on open/merge/close via `.github/scripts/contributions.sh`, committed to main by the Actions bot.
+
+##  Checkpoint 2026-09-22 22:xx - known-good point for the front end
+
+- **`main` @ `36cde7d`**, APK `SteamDeck-r51.apk` staged (sha `adb5acf5…`, run 35761437514) =
+  frontend-r6 + docs. Same versionCode 5 / 0.1.4 inside; **0.1.5 not cut yet**.
+- **Proven on the Pocket FIT this evening:** the front end renders and navigates (rail, art,
+  square emulator icons, focus outline); RPCS3 lists Tomb Raider (ISO in a subfolder) and God of
+  War II HD (its HDD);  God of War II HD boots the game under gamescope at ~40 fps
+  (`session-20260922-133044`: `run: rpcs3.AppImage --no-gui …NPUA80491/USRDIR/EBOOT.BIN`, 399
+  frames on screen in 10 s).
+- **Not yet proven:** desktop→Steam hand-off after the three fixes (r47–r50);  FlatOut from the
+  rail (Steam session with rungameid); Running tile; volume keys; automatic SD game storage
+  (Install drive drop-down); Steam desktop-UI session; Tomb Raider ISO boot.
+- **Open decision:** rename the app away from Valve's marks before it spreads (shortlist offered:
+  Linuxlator / Pocketscope / Portascope); rename = label, icon text, `applicationId` (fresh
+  install + runtime re-download), `Download/SteamDeck/` log folder, repo, release-tag pattern.
+- **Rollback:** `git checkout 36cde7d` (or 0.1.4 tag `8e58e8e` for the last release), reinstall
+  `SteamDeck-r51.apk` / `SteamDeck-0.1.4.apk` from Downloads.
+- Loose ends: `ui/MainScreen.kt` keeps ConfirmDialog/CreditsDialog/EmulatorHelpDialog but its
+  `MainScreen`/tiles are dead; worktree `~/steamdeck-frontend` still exists (branch merged).
+
+## Current state (2026-09-22, evening)
+
+- **`main` @ the front end merge** (`feat/frontend` fast-forwarded): the launcher main screen -
+  Steam ▸ games, Desktop ▸ emulators ▸ games, Running tile, focus outline.  First emulator game
+  proven from the app: God of War II HD in RPCS3 under gamescope at ~40 fps on the Pocket FIT.
+- Since 0.1.4 on main, unreleased: volume keys to Android;  emulators under gamescope; ROMs chip
+  + ? explainer; sysmem copy + ENOSYS hint; automatic game storage (a card = a Steam library);
+  the client's games on the desktop with a `steam` shim; desktop→Steam hand-off (three causes
+  fixed from FIT logs: Surface detach race, the replaced session's exit ending the new one,
+  shared log folder); the front end. Next release = 0.1.5 once the hand-off is seen working.
+
+## State at 0.1.4 (2026-09-22)
+
+- **Latest release: 0.1.4** - private: https://github.com/The412Banner/SteamDeck/releases/tag/0.1.4
+  · public: https://github.com/The412Banner/winlator-contents/releases/tag/SteamDeck-0.1.4
+  `main` @ `8e58e8e`, CI run 35682844106, versionCode 5, APK sha256 `4b53ce6a…` (20,957,823 B).
+- **Runtime:** `linuxfs-r9` on winlator-contents (790 MB), the only runtime release left; desktop
+  packages from `steamdeck-desktop-r1`. The app rewrites its own scripts (`bannerlator-*`), the
+  driver, `bannerlator-netmanager` and the DirectAudio pieces into the installed runtime at every
+  launch, so a fix in those reaches an installed runtime without a re-download.
+- **Shipped feature set:** the native ARM64 Steam client under gamescope on the in-app Wayland
+  compositor; a LXQt-on-labwc desktop with Firefox and a shelf of emulators; Proton tools
+  (GE / CachyOS) as downloads; graphics drivers importable per mode; DirectAudio + microphone;
+  client/game core masks + four session switches; NetworkManager stand-in (Max's); overlay
+  restored; ROMs folder + Storage bound into the session's home; Bannerlator's File Manager;
+  a cog per launch mode (resolution, shape, HDR10, drivers, touch, OSC/audio, renderer); per-session
+  log folders that survive a crash; leftover-process sweep; frame generation (Win-FG, LSFG).
+- **Verification level:** every release is CI-green and staged to the maintainer's device. Proven
+  on hardware (Pocket FIT / Fold): sign-in, store, install + launch (FlatOut 144 Hz), frame
+  generation, controllers + OSC, sound, desktop + Firefox, folding mid-session, driver import, the
+  log folder, the ANR fix, the network page. **Not yet proven:** everything 0.1.4 added (ROMs
+  folder inside an emulator, File Manager, resolution cap, HDR10, crash sweep, orphan sweep, the
+  drawer's Steam menu), DirectAudio *voice*, the core masks' effect, offline start, the soft
+  keyboard, any emulator with a game, Adreno 710.
+- **Open field reports (Thor Pro, 8 Gen 2):** trackpad-mode tap does not click (code sends the
+  click; cause not found by reading); crash after 1–2 min in Ballionaire / Geometry Wars (no log
+  survived - 0.1.4's sweep will leave `crash.log`); a Fold's 10–20 fps client menus (Chromium →
+  ANGLE → Zink on an experimental A8xx Turnip); Fold crash loop (xalia ENOSYS storm - switches
+  shipped, untested); FlatOut shrinking after Resume (gamescope forcing the swapchain extent).
+
+## Release pipeline (how every version is cut)
+1. Work on `main`, pushed → `Build APK` runs `assembleRelease` (AOSP test key, v1+v2+v3 re-signed
+   by CI with zipalign + apksigner) → artifact `steamdeck-apk`. Dev builds keep the last release's
+   versionCode/versionName; a release bumps both in `app/build.gradle` in its own commit.
+2. Verify: `gh run view <id> --json conclusion` (never trust a run listing's first row - a
+   `workflow_dispatch` run gets cancelled by concurrency in favour of the push-triggered one),
+   download the artifact, sha256 it.
+3. Stage: `cp` to `/sdcard/Download/SteamDeck-rN.apk` (dev) or `SteamDeck-X.Y.Z.apk` (release).
+   Never `pm install` - the maintainer installs.
+4. Private release `X.Y.Z` targeting the **full 40-char sha** (a short sha is refused), notes from
+   the draft in the session scratchpad, `--latest`. Public release `SteamDeck-X.Y.Z` on
+   winlator-contents with the README-style notes; one public release per version.
+5. README ledger, this log, memory.
+
+## Timeline
+- **2026-09-19 - 0.1 groundwork.** Lifted out of Bannerlator's gamescope runtime on the user's
+  ask: one screen, one button. r2 reached Big Picture sign-in on the Pocket FIT. Package renamed to
+  `com.steamdeck.launcher` (r4), foreground service, test key, on-screen controls.
+- **2026-09-20 - 0.1.** The Linux Steam client and a desktop; runtime r6→r9 in a day (Proton
+  self-selection, proot shipped, refresh rate, video, first run reaches a game). Public explainer
+  page for non-Linux users.
+- **2026-09-21 - 0.1.1.** Catch-up with Bannerlator: driver selection (two lists, per mode),
+  overlay restored + GameHub force-stop, DirectAudio + microphone, core masks, four session
+  switches as toggles, per-session log folders with credentials scrubbed, Adreno 710 path via
+  Banners-Turnip r3.
+- **2026-09-22 - 0.1.2.** The teardown ANR (log collection on the main thread) fixed; two
+  compositor log lines (frame-size change, window rename); README ledger.
+- **2026-09-22 - 0.1.3.** Max's NetworkManager stand-in ported (the client's network page); shim
+  audit vs WinNative = zero functional drift.
+- **2026-09-22 (later) - after 0.1.4, on main.** Volume keys;  emulators under gamescope (the
+  desktop cannot: labwc on pixman offers no dma-buf); ROMs chip; sysmem warning + ENOSYS hint;
+  automatic game storage; the client's games on the desktop (`steam` shim hands off to a
+  gamescope session); the hand-off's three faults found in FIT logs and fixed; the front end
+  merged (branch `feat/frontend`, r1–r6); God of War II HD booted in RPCS3 from the rail.
+- **2026-09-22 - 0.1.4.** ROMs folder + Storage in the session's home; Bannerlator's File Manager
+  ported whole; a cog per mode (railed settings window) with resolution cap, shape, HDR10 gated on
+  the panel, drivers, touch, OSC/audio/renderer; two-column main menu; crash-safe log folders +
+  Session logs toggle; OrphanReaper; drawer Steam menu. Public releases reorganised: one per
+  version, old `Steamdeck` release and runtimes r1–r8 deleted.
+
+## Architecture (where things live)
+- `MainActivity` / `ui/MainScreen.kt` - the main screen; `ui/ModeSettingsDialog.kt` the cogs;
+  `ui/*Dialog.kt` the rest.
+- `SessionActivity` - the Surface, input (touch, touchpad, pads, keyboard), the drawer, the HDR
+  decision, the compositor start (`wayland/CompositorHost`, `wayland/WaylandCompositor`).
+- `session/SessionService` - proot + gamescope/labwc + PulseAudio + DirectAudio relay + network
+  link; binds (`/root/Storage`, `/root/ROMs`); env for the guest; teardown; `OrphanReaper`;
+  `SessionArtifacts` + `CrashHandler` + `SessionPaths` for the log folders; `SessionPrefs`.
+- `files/` - Bannerlator's File Manager (`FileManagerScreen.kt` and its helpers), the picker
+  activity and `InAppFilePicker` intent API.
+- `gpu/` - Turnip (bionic, for the compositor) and Linux Turnip (glibc, for the runtime) managers.
+- `tools/linuxfs/overlay/usr/local/bin/bannerlator-*` - the guest scripts, staged into the
+  runtime by `SessionFiles` at every launch (CI packages only `bannerlator-*` names).
+- `app/src/main/cpp/waylandcomp/` - the compositor (shared lineage with Bannerlator).
+
+## Lessons learned (don't repeat these)
+- Nothing in teardown may do bulk filesystem work on the main thread (0.1.1's ANR).
+- A CI closure check on a multi-line variable must flatten it first (`libaaudio.so` refusal).
+- A runtime script must be named `bannerlator-*` or CI never packages it.
+- `gh release create --target` needs the full sha.
+- A proot bind is invisible to a program's "Computer" list; put what users need under home.
+- The compositor decides its driver and its HDR gate once per app process - anything that changes
+  them applies after the app is fully closed, and the UI must say so.
+- Bannerlator's File Manager ports mechanically (`port_fm.py` anchors) once the container hooks
+  are cut; do not hand-edit 2,500 lines.
+- Deleting a release asset on GitHub can drop a sibling asset - re-list and restore.
+- A resource without an implementation makes libwayland abort on its first request - every
+  interface the compositor hands out needs one, even as no-ops (positioner, popup, output).
+- The KGSL stand-in answers no DRM ioctl: `drmIsMaster()` reads that as "master"; check
+  `drmGetVersion()` before treating a GPU fd as DRM.
+- Verify an emulator's config values from its source: RPCS3's GUI says "Async Shader Recompiler",
+  the config value is "Async Recompiler (multi-threaded)".
+- Upstream PCSX2 has no ARM64 recompiler; a correct ARM64 build of it is still interpreter-slow.
+- An Android app starts in touch mode, where Compose clickables refuse focus: `requestFocus()` on open
+  does nothing until the app asks for keyboard input mode.
+- `grep -q` (or `head`) at the end of a pipe exits early; under `pipefail` that fails the whole line at
+  random. Capture the output first, then search it.
+- A reusable workflow gets no more permission than its caller gives, and sees environment secrets only
+  with `secrets: inherit`. A workflow naming an environment that does not exist creates it unprotected.
+- `pull_request_target` shares main's caches with the pull request's code - never with signed builds.
+- apksigner prints signers as "Signer #1", "Signer (minSdkVersion=…)" or "V3.0 Signer:" by version.
+
+## Backlog / next
+- Play-test the other emulators one by one on the FIT: Dolphin, Cemu, melonDS, PPSSPP, RetroArch
+  (pad profiles and covers exist; nothing played yet). DuckStation done 2026-09-24.
+- **Kurt's PR #39 (Non-Launcher flavor) breaks signing as written**: it replaces the `droiddeck-apk`
+  artifact with `droiddeck-home-apk` / `droiddeck-non-launcher-apk`, which `sign.yml` and `release.yml`
+  read, and it conflicts with today's `build.yml`. Adapt before merging: sign both editions (a release
+  would then be editions × packages).
+- After the repo is public: add a required reviewer to the `release` environment (not allowed on a
+  private repo on the Pro plan).
+- First release with the new key (0.1.7): run `release.yml`, publish; 0.1.6 users move over by the
+  hand-over.
+- Keyboard Esc in a rail game does not reach ARMSX2's pause menu (guide does).
+- 0.1.7 pre-release when ready (everything above is on main only).
+- Pin a newer ARMSX2 nightly only after testing it (it changes daily).
+- Device-prove 0.1.4 on the FIT (list above).
+- Thor Pro: trackpad tap; the 1–2 min in-game crash once a `crash.log` arrives.
+- Xfce as a second desktop shell (Max's branch runs XFCE 4.20 on labwc) - a catalog package + a
+  shell choice in the Desktop cog; comfort, not performance.
+- Quick Access Menu for non-Deck pads - Back double-press (500 ms) now routes to the existing Guide+A
+  chord; the in-session menu, Steam settings, and Setup › Session can swap the single- and double-Back
+  actions. Device confirmation is still needed.
+- FlatOut shrink: try `vk_wsi_force_swapchain_to_current_extent=false` via `steamdeck-env`.
+- Max's stricter `winnative-directaudio` guards; `winnative-epic-launch` (a feature).
+- Rename before anything truly public: "SteamDeck" is Valve's mark. (Done 2026-09-23: DroidDeck.)

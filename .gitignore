@@ -1,0 +1,78 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+# Built in CI from tools/linuxfs and app/src/main/cpp/fakeinput.cpp, never committed, so the two
+# copies cannot drift.
+app/src/main/assets/linuxfs/
+app/src/main/jniLibs/arm64-v8a/libproot.so
+app/src/main/jniLibs/arm64-v8a/.proot-inputs
+app/src/main/jniLibs/arm64-v8a/libproot-loader.so
+app/src/main/jniLibs/arm64-v8a/libdirectaudiorelay.so
+app/src/main/assets/droiddeck-esync/
+
+# Signing keys never enter the repo (DroidDeck's lives in GitHub environment secrets; see
+# tools/release/make-release-key.sh). keystore/testkey.p12 is the public AOSP testkey.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pk8
+*.pem
+!keystore/testkey.p12
+droiddeck-release-key/
+password.txt
+__pycache__/
+
+# Local signing settings (build-apk.bat, tools/build_local.sh); hold a password. The live file is
+# GoogleKeystore/signing.env, covered by /GoogleKeystore/ below; this is the older root location,
+# still read so a checkout set up before the move keeps signing with its own key.
+.signing.env
+
+# Everything staged for a local install on the device: Valve's Steam client packages (which
+# download-steam-client.bat fills in), the Linux runtime, Valve's Proton seed and the third-party
+# Protons. Several GB of somebody else's binaries, and not source.
+/FirstLocalInstall/
+
+# The same bundle under the fork's own name, with the built APK dropped in beside it: what gets
+# copied to a device in one go. Local files, exactly as /FirstLocalInstall/ is.
+/DroidDeckCOK/
+
+# Not source and never published. GoogleKeystore holds the app-signing key, the settings that name
+# it (signing.env: keystore, password, alias, expected certificate) and the password written out
+# beside it (DroidDeck-credentials.txt, DroidDeckeystorepassword.txt) - the *.keystore rule above
+# covers the key itself, this covers the rest of the folder. 00Design is working files.
+/GoogleKeystore/
+/00Design/
+
+# Local build scratch. Every local build writes here: build-apk.bat logs to build-logs\build-<variant>-
+# <stamp>.log, and tools/release/sign-apk-local.py keeps its scratch (zipalign intermediates, the
+# signing lineage, a transient .idsig) in build-logs\sign\. It also held the extracted upstream/fork
+# trees used for diffing and several GB of Valve Steam client binaries staged for on-device testing
+# (steam/ alone was 3.5 GB, and libcef.so is 218 MB - GitHub rejects any single file over 100 MB).
+# Nothing here is source.
+/build-logs/
+
+# Where the finished APK lands. build-apk.bat copies it to dist\ as DroidDeckCOK-<version>-<variant>.apk
+# (the Gradle copy under app\build\outputs\ is already covered by the build/ rule above), and
+# tools/release/sign-apk-local.py drops an .idsig beside whatever it signs. Without these, one build
+# turns the next `git add -A` into a 37 MB commit.
+/dist/
+*.apk
+*.aab
+*.idsig
+
+# The Steam client downloader's own default output. download-steam-client.bat passes
+# --out FirstLocalInstall\steam-client (covered by /FirstLocalInstall/ above), but running
+# tools/steam-client-fetch.py on its own lands ./steam-client - 17 Valve zips, several hundred MB.
+steam-client/
+
+# Windows shell junk, created the moment the tree is browsed in Explorer.
+Thumbs.db
+desktop.ini
