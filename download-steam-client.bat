@@ -4,10 +4,15 @@ rem  DroidDeck - Steam client package downloader (Windows)
 rem
 rem  Usage:  download-steam-client.bat [options]
 rem
-rem    (no options)      download the 17 packages into .\FirstLocalInstall\steam-client
+rem    (no options)      download the 17 packages into
+rem                      DroidDeckCOK\FirstLocalInstall\steam-client, the folder
+rem                      copied to the device, from whichever of Valve's two CDN
+rem                      edges is quicker
 rem    --list            only print the manifest and the package URLs
 rem    --channel NAME    publicbeta | steamdeck_publicbeta (default)
-rem    --host HOST       a different copy of Valve's CDN
+rem    --official        pin Valve's own edge (client-update.fastly.steamstatic.com),
+rem                      the one the device's install script uses; no measuring
+rem    --host HOST       one CDN host or whole base URL, used as-is
 rem    --out DIR         put the packages somewhere else
 rem    --no-open         do not open the folder when finished
 rem    --no-pause        do not wait for a key press at the end
@@ -18,16 +23,29 @@ rem  install them from a folder on the device, so the whole point of this
 rem  script is to get that folder down on a machine whose connection to Valve
 rem  is good, then copy it across.
 rem
+rem  Which CDN edge to use is worth choosing, because neither of Valve's has a
+rem  point of presence in mainland China and which one is quicker is a property
+rem  of the line rather than of the file. With no options this script measures
+rem  both - one small ranged read each, of the largest component - and takes
+rem  the faster, falling back to the other if a component still fails. There is
+rem  no Chinese mirror of client-update to prefer: Valve's China CDN hosts only
+rem  carry game content. --official skips the measuring and pins the edge the
+rem  device itself would use, which is the right thing when comparing against
+rem  what the device does. DROIDDECK_STEAM_HOST does what --host does.
+rem
 rem  Every package is verified against the sha256 the manifest carries, and
 rem  the manifest itself is written into the folder, so the device can check
 rem  the lot without reaching Valve at all. Run this again any time: finished
 rem  files are verified and skipped, partial ones resume.
 rem
-rem  It fills .\FirstLocalInstall\steam-client, the folder this checkout keeps its local-install
-rem  payloads in - the Linux runtime, Valve's Proton seed and the third-party Protons sit beside it.
+rem  It fills DroidDeckCOK\FirstLocalInstall\steam-client, the device bundle this checkout
+rem  keeps and copies across in one go - the built APK sits beside that folder, and the
+rem  Linux runtime, Valve's Proton seed and the third-party Protons sit in it too.
+rem  (The checkout's own FirstLocalInstall is a staging area; the bundle is what is used.
+rem  Both are git-ignored, neither is ever committed.)
 rem
 rem  Then copy the packages to the device, for example
-rem      adb push FirstLocalInstall\steam-client /sdcard/Download/steam-client
+rem      adb push DroidDeckCOK\FirstLocalInstall\steam-client /sdcard/Download/steam-client
 rem  and pick "Install from folder" under Steam client in DroidDeck's
 rem  settings.
 rem
@@ -40,12 +58,20 @@ setlocal EnableExtensions
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-set "OUT=%ROOT%\FirstLocalInstall\steam-client"
+rem  Two git-ignored local payload folders exist side by side, and they are not
+rem  the same thing. DroidDeckCOK\FirstLocalInstall is the device bundle - the
+rem  folder copied across in one go, with the built APK dropped in beside it -
+rem  and it is the one that is actually used. .\FirstLocalInstall is only a
+rem  staging area. Packages go to the bundle, so a download lands where it is
+rem  needed rather than needing a copy afterwards.
+set "OUT=%ROOT%\DroidDeckCOK\FirstLocalInstall\steam-client"
 set "OPEN_OUT=1"
 set "PAUSE_AT_END=1"
 set "EXTRA="
 set "LIST_ONLY="
 set "OTHER_OUT="
+set "CDN_NOTE=auto - measures both Valve edges, the faster one wins"
+if defined DROIDDECK_STEAM_HOST set "CDN_NOTE=%DROIDDECK_STEAM_HOST% (from DROIDDECK_STEAM_HOST)"
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -58,6 +84,16 @@ if /i "%~1"=="--no-pause" (set "PAUSE_AT_END=0" & set "FWD=")
 if /i "%~1"=="-h"         (set "FWD=" & goto usage)
 if /i "%~1"=="--help"     (set "FWD=" & goto usage)
 if /i "%~1"=="/?"         (set "FWD=" & goto usage)
+rem  --official is this script's own name for the pinned edge, so it is
+rem  expanded here rather than passed on; the tool only knows --host.
+if /i "%~1"=="--official" (
+    set "EXTRA=%EXTRA% --host client-update.fastly.steamstatic.com"
+    set "CDN_NOTE=client-update.fastly.steamstatic.com (pinned, --official)"
+    set "FWD="
+    shift
+    goto parse_args
+)
+if /i "%~1"=="--host" set "CDN_NOTE=%~2"
 if /i "%~1"=="--list" set "LIST_ONLY=1"
 if /i "%~1"=="--out"  set "OTHER_OUT=1"
 rem  Re-quoted on the way through: a path with a space in it (--out "D:\My
@@ -106,6 +142,7 @@ echo ===========================================================================
 echo  DroidDeck Steam client downloader
 echo  project : %ROOT%
 echo  target  : %OUT%
+echo  cdn     : %CDN_NOTE%
 echo  python  : %PYTHON%
 echo ===========================================================================
 echo.
@@ -158,23 +195,33 @@ exit /b 0
 
 :usage
 echo.
-echo  download-steam-client.bat [--list] [--channel NAME] [--host HOST]
-echo                            [--out DIR] [--no-open] [--no-pause]
+echo  download-steam-client.bat [--list] [--channel NAME] [--official]
+echo                            [--host HOST] [--out DIR] [--no-open] [--no-pause]
 echo.
 echo    (no options)      download the 17 packages into
-echo                      .\FirstLocalInstall\steam-client
+echo                      DroidDeckCOK\FirstLocalInstall\steam-client, the
+echo                      device bundle, from whichever of Valve's two CDN
+echo                      edges measures faster
 echo    --list            only print the manifest and the package URLs
 echo    --channel NAME    publicbeta ^| steamdeck_publicbeta ^(default^)
-echo    --host HOST       a different copy of Valve's CDN. Default is
-echo                      client-update.fastly.steamstatic.com; Valve serves
-echo                      the same files from client-update.steamstatic.com,
-echo                      which measured about twice as fast from one network
-echo                      here. Either can be given as a whole base URL.
+echo    --official        pin client-update.fastly.steamstatic.com, the edge the
+echo                      device's own install script uses. Use this to compare
+echo                      against what the device does, or when the measuring
+echo                      picks something that turns out to be worse
+echo    --host HOST       one CDN host or whole base URL, used as-is with no
+echo                      measuring. Pointer at a proxy of your own and the
+echo                      whole set comes through it, e.g.
+echo                          --host https://my-proxy/client-update.fastly.steamstatic.com
 echo    --out DIR         put the packages somewhere else
 echo    --no-open         do not open the folder when finished
 echo    --no-pause        do not wait for a key press at the end
 echo.
-echo  Override: DROIDDECK_PYTHON
+echo  Neither edge has a point of presence in mainland China, and there is no
+echo  Chinese mirror of client-update to point at - Valve's China CDN hosts only
+echo  serve game content. Measuring beats guessing: the faster edge is a
+echo  property of the line, and it has differed between runs here.
+echo.
+echo  Overrides: DROIDDECK_PYTHON, DROIDDECK_STEAM_HOST ^(same as --host^)
 echo.
 if "%PAUSE_AT_END%"=="1" pause
 exit /b 0
