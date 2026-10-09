@@ -306,13 +306,16 @@ rem  APK installs, its UI runs, and then it sits on the session loading screen
 rem  forever. Every other check passes - which is how one got shipped.
 set "PAYLOAD_MISSING="
 if not exist "%ROOT%\app\src\main\jniLibs\arm64-v8a\libproot.so" set "PAYLOAD_MISSING=1"
+if not exist "%ROOT%\app\src\main\jniLibs\arm64-v8a\libdirectaudiorelay.so" set "PAYLOAD_MISSING=1"
 if not exist "%ROOT%\app\src\main\assets\linuxfs\libfakeinput.so" set "PAYLOAD_MISSING=1"
+if not exist "%ROOT%\app\src\main\assets\linuxfs\libssbs.so" set "PAYLOAD_MISSING=1"
 if not exist "%ROOT%\app\src\main\assets\linuxfs\usr\local\bin\gamescope" set "PAYLOAD_MISSING=1"
 if defined PAYLOAD_MISSING (
     echo.
     echo [WARN] This checkout is missing the session's native payload: either
-    echo        app\src\main\jniLibs\arm64-v8a has no libproot.so, or
-    echo        app\src\main\assets\linuxfs has no libfakeinput.so / gamescope.
+    echo        app\src\main\jniLibs\arm64-v8a has no libproot.so or
+    echo        libdirectaudiorelay.so, or app\src\main\assets\linuxfs has no
+    echo        libfakeinput.so / libssbs.so / gamescope.
     echo        Those are built by tools\build_local.sh, which needs Docker; no
     echo        other step produces them. Without them the APK installs and its UI
     echo        runs, but no Linux session can ever start.

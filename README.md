@@ -5,13 +5,26 @@
   </picture>
 </p>
 
-# DroidDeckCOK 0.3.1 · 中文本地安装版
+# DroidDeckCOK · 中文本地一键安装版
 
-**DroidDeckCOK**（COK = **C**hinese **O**ne **K**ey）是本仓库的名字，指这份以「首次本地一键安装」为核心的中文本地化改造版。**改名只落在构建产物的文件名上**：包名、版本号、应用名与上游 0.3.1 完全相同（见「[二、安装 APK](#二安装-apk)」）。
+**DroidDeckCOK**（COK = **C**hinese **O**ne **K**ey）是本仓库的名字，指这份**在官方 DroidDeck 上加了「首次本地一键安装」**的中文本地化改造版。**改名只落在构建产物的文件名上**：包名、版本号、应用名与上游完全相同（见「[二、安装 APK](#二安装-apk)」）。
+
+离线一键安装包文件，百度网盘，永久分享：
+链接: https://pan.baidu.com/s/1PY7ow7K81tvcqq0AAj8uNQ 提取码: 9527 
+
+离线一键安装包文件，夸克网盘，永久分享：
+链接：https://pan.quark.cn/s/3962c8e97fde
+提取码：DRMQ
+
+中文说明安装教学视频地址B站：
+https://www.bilibili.com/video/BV1XAHd6PEKT/?vd_source=55a7f582a98d214a03f037a275fc90b3#reply320122768208
+
+中文说明安装教学视频地址B站：
+https://www.youtube.com/watch?v=ND505ZGazeA
 
 DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve 的 Steam 客户端（Big Picture 大屏界面），Windows 游戏走 Valve 的 ARM64 Proton。
 
-本仓库是 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck) **0.3.1** 版本的改造版。功能与上游一致，只做了下面四件事，并因为密钥的原因**重新签了名**（见「[五、签名说明](#五签名说明为什么本仓库是自己签的)」）：
+本仓库是 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck) 的改造版，**跟随上游滚动更新，本文不绑定任何具体版本号**。功能与上游一致，只做了下面四件事，并因为密钥的原因**重新签了名**（见「[五、签名说明](#五签名说明为什么本仓库是自己签的)」）：
 
 | # | 改动 | 说明 |
 |---|---|---|
@@ -27,16 +40,16 @@ DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve �
 ## 一、系统要求
 
 - **Android 14（API 34）及以上**
-- **Adreno 730 或更高**（Adreno 8xx 也可以）。Mali、Xclipse、PowerVR、Adreno 710 不支持
+- **Adreno 730 或更高**（Adreno 8xx 也可以）。**Adreno 6xx 为实验性支持**：DirectX 11 走 DXVK 2，可能可以运行；DirectX 12 游戏仍可能崩溃。Mali、Xclipse、PowerVR、Adreno 710 不支持
 - arm64 设备，**不需要 root**
 - 存储空间：Linux 运行环境约 3 GB；桌面与模拟器再约 1.1 GB
 - 首次启动 Steam **之前**，必须在系统「开发者选项」里关掉 **「限制子进程」**（Restrict child processes）。Android 12 / 13 若没有这个开关，首次启动 Steam 时会出现一个「帮我修好」按钮自动完成设置
 
 ## 二、安装 APK
 
-用本仓库构建出来的包在 `DroidDeckCOK-0.3.1-release.apk`（版本 `0.3.1`，versionCode `11`，包名 `com.droiddeck.launcher`）。
+用本仓库构建出来的包是 `DroidDeckCOK-<版本>-release.apk`（`<版本>` 取自构建时的 `versionName`；包名 `com.droiddeck.launcher`）。
 
-文件名里的 `DroidDeckCOK` 只是本仓库给构建产物起的名字（COK 即 Chinese One Key）。**包名、版本号、应用名全部沿用上游 0.3.1，一个都没改**，所以装到设备上桌面图标仍然显示 `DroidDeck`，覆盖升级的行为也和以前一样。
+文件名里的 `DroidDeckCOK` 只是本仓库给构建产物起的名字（COK 即 Chinese One Key）。**包名、版本号、应用名全部沿用上游，一个都没改**，所以装到设备上桌面图标仍然显示 `DroidDeck`，覆盖升级的行为也和以前一样。
 
 装上、打开之后，先装好 Linux 运行环境（或直接用下节的本地一键安装），再按 **Play** 登录 Steam —— Steam 客户端会在首次启动时自行下载。
 
@@ -56,10 +69,10 @@ DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve �
 
 | 文件名 | 是什么 | 必需 | 大小 | 从哪来 |
 |---|---|---|---|---|
-| `linuxfs.tar.zst` | Linux 运行环境（runtime） | **必需** | 754 MiB | 托管目录 `linuxfs-r9` |
-| `proton-experimental-arm64-<build>.tar.zst` | Valve 的 Proton Experimental（ARM64）种子 | **必需** | 380 MiB | 托管目录 `steam-proton-arm64-25502785` |
+| `linuxfs.tar.zst` | Linux 运行环境（runtime） | **必需** | 754 MiB | 托管目录里的 runtime 一项 |
+| `proton-experimental-arm64-<build>.tar.zst` | Valve 的 Proton Experimental（ARM64）种子 | **必需** | 380 MiB | 托管目录里的 Proton 种子一项 |
 | `steam-client\`（文件夹，17 个 zip + manifest） | Steam 客户端本体 | **必需** | 344 MiB | 运行根目录的 `download-steam-client.bat` 自动下载 |
-| `desktop.tar.zst` | LXQt 桌面（含 Firefox、模拟器入口） | 推荐 | 406 MiB | 托管目录 `steamdeck-desktop-r1` |
+| `desktop.tar.zst` | LXQt 桌面（含 Firefox、模拟器入口） | 推荐 | 406 MiB | 托管目录里的 desktop 一项 |
 | `fonts\`（文件夹，`.ttf` / `.ttc` / `.otf`） | 中文字体 | 推荐 | 自备 | 自行放入，随附简繁两款霞鹜文楷 |
 | `GE-Proton*.tar.gz` / `proton-cachyos*` | 第三方 Proton | 可选 | — | 各自的发布页 |
 
@@ -85,7 +98,7 @@ adb push FirstLocalInstall /sdcard/Download/
 
 ### 3.3 操作步骤
 
-1. 装好本 APK（`DroidDeckCOK-0.3.1-release.apk`）并打开 DroidDeck
+1. 装好本仓库构建出的 APK 并打开 DroidDeck
 2. 进入 **Steam → 游玩 Steam** 页面
 3. 点齿轮图标**右边**的 **「首次本地一键安装」** 按钮
 4. 在弹出的选择器里选中手机上的 `FirstLocalInstall` 文件夹（**选它的上一级 `/Download` 也可以**）
@@ -101,7 +114,7 @@ build-apk.bat
 
 它会自动完成：找 Android SDK / JDK 17+ / NDK、链接 NDK 到 Gradle 要求的位置、**从中国大陆地区的镜像取 Gradle 本体**（`gradlew` 会去 `services.gradle.org`，那个域名会重定向到 `github.com`，在中国大陆地区的网络下常连不上）、写入 `local.properties`、编译、**校验 APK 里真的带上了原生载荷**、签名，最后把包复制到 `dist\` 并打开该目录。
 
-产出：`DroidDeckCOK-0.3.1-release.apk`
+产出：`dist\DroidDeckCOK-<版本>-release.apk`（`<版本>` 取自 `app/build.gradle` 的 `versionName`）
 
 所需环境：Android SDK（含 **Platform 34**，项目 `compileSdk 34`）、JDK 17 或更高、NDK `27.3.13750724`。
 
@@ -152,7 +165,7 @@ GitHub 官方发布的 APK 由 DroidDeck 的发布密钥签名（证书 `CN=Droi
 
 ## 七、致谢与许可
 
-本项目基于 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck)（0.3.1），沿用其 **GPL-3.0** 许可，详见 [LICENSE](LICENSE)。
+本项目基于 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck)，沿用其 **GPL-3.0** 许可，详见 [LICENSE](LICENSE)。
 
 运行环境、shim、输入与手柄相关工作建立在 WinNative 与 Bannerlator（maxjivi05）之上。LSFG 帧生成来自 Camille LaVey 与 [Eden](https://eden-emu.dev) 模拟器项目的工作，遵循 [lsfg-vk](https://github.com/PancakeTAS/lsfg-vk)，由 [@maxjivi05](https://github.com/maxjivi05) 移植到 WinNative 与 DroidDeck；它需要你自己购买 [Lossless Scaling](https://store.steampowered.com/app/993090/)，本身不附带其任何 shader。x86 AppImage 以及自身运行时无法解包的那些，使用 VHSgunzo 的 [uruntime](https://github.com/VHSgunzo/uruntime)（MIT）解包，原样附带其许可证。
 

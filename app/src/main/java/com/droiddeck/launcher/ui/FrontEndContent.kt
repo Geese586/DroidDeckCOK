@@ -218,9 +218,10 @@ private fun Content(
     }
     if (selected == "updates") {
         // Not upstream's UpdatesPage: this checkout cannot install an official build over its own
-        // signature, so the page hands over the releases address instead. Upstream's page is left
-        // in place, unused, so it survives an upstream merge (see 00Design/custom-changes).
-        UpdatesForkPage(s, modifier.padding(horizontal = padH, vertical = padV))
+        // signature, so the page hands over the releases address instead, and reads the same
+        // catalog to say which version DroidDeck is on. Upstream's page is left in place, unused,
+        // so it survives an upstream merge (see 00Design/custom-changes).
+        UpdatesForkPage(s, a, modifier.padding(horizontal = padH, vertical = padV))
         return
     }
     // Steam is a full-bleed wall of the library with Play over it.
@@ -310,7 +311,7 @@ private fun Content(
                             Column {
                                 Text(e.name, fontSize = if (narrow) 22.sp else 26.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
                                 Text(
-                                    e.system.replaceFirstChar { it.uppercase() }.let { if (e.installed) it else stringResource(R.string.content_not_installed_suffix, it) },
+                                    systemLabel(e).let { if (e.installed) it else stringResource(R.string.content_not_installed_suffix, it) },
                                     fontSize = 14.sp, color = colors.onSurfaceVariant,
                                 )
                             }
@@ -337,7 +338,7 @@ private fun Content(
                             )
                         }
                         else Rise(5, Modifier.fillMaxWidth()) {
-                            ArtGrid(e.games.mapIndexed { index, g -> Tile(g.name, if (g.art != null) "installed" else g.hostPath.extension.uppercase().ifEmpty { "folder" }, g.art, "rom:${e.id}:$index", e.iconRes) { onSelect("rom:${e.id}:$index") } }, wide = e.games.none { it.art != null })
+                            ArtGrid(e.games.mapIndexed { index, g -> Tile(g.name, if (g.art != null) stringResource(R.string.content_rom_installed) else g.hostPath.extension.uppercase().ifEmpty { stringResource(R.string.content_rom_folder) }, g.art, "rom:${e.id}:$index", e.iconRes) { onSelect("rom:${e.id}:$index") } }, wide = e.games.none { it.art != null })
                         }
                     } else {
                         if (pkg != null) Rise(2) {
@@ -382,7 +383,7 @@ private fun Content(
                     Rise(0) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             BackLink(e.name) { onSelect("emu:${e.id}") }
-                            Eyebrow(stringResource(R.string.content_desktop_system, e.system))
+                            Eyebrow(stringResource(R.string.content_desktop_system, systemLabel(e)))
                         }
                     }
                     Rise(1) { Title(g.name) }
@@ -394,7 +395,7 @@ private fun Content(
                                 Actions {
                                     Image(painterResource(e.iconRes), null, modifier = Modifier.size(40.dp))
                                     PrimaryButton(stringResource(R.string.content_launch_in, e.name), enabled = !s.busy, main = true) { a.onRom(g) }
-                                    if (s.busy) BusyChip(s) else ActionChip(g.hostPath.extension.uppercase().ifEmpty { "folder" }, ok = false)
+                                    if (s.busy) BusyChip(s) else ActionChip(g.hostPath.extension.uppercase().ifEmpty { stringResource(R.string.content_rom_folder) }, ok = false)
                                 }
                             }
                             if (g.art != null && !narrow) Poster(g.art, g.name, Modifier.width(detailPosterWidth))
@@ -406,7 +407,7 @@ private fun Content(
                         Rise(4, Modifier.fillMaxWidth()) {
                             ArtGrid(others.map { x ->
                                 val index = e.games.indexOf(x)
-                                Tile(x.name, if (x.art != null) "installed" else x.hostPath.extension.uppercase().ifEmpty { "folder" }, x.art, "rom:${e.id}:$index", e.iconRes) { onSelect("rom:${e.id}:$index") }
+                                Tile(x.name, if (x.art != null) stringResource(R.string.content_rom_installed) else x.hostPath.extension.uppercase().ifEmpty { stringResource(R.string.content_rom_folder) }, x.art, "rom:${e.id}:$index", e.iconRes) { onSelect("rom:${e.id}:$index") }
                             }, wide = others.none { it.art != null })
                         }
                     }
@@ -422,7 +423,6 @@ private fun Content(
 private fun DesktopCard(s: FrontEndState, a: FrontEndActions) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
-    val narrow = LocalNarrowPane.current
     val actions: @Composable () -> Unit = {
         Actions {
             // Enabled without a runtime or the desktop: the session's loading screen installs them first.
@@ -431,24 +431,32 @@ private fun DesktopCard(s: FrontEndState, a: FrontEndActions) {
             BusyChip(s)
         }
     }
-    Column(
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxWidth().clip(Shape16).background(colors.surface).border(1.dp, pal.line, Shape16).padding(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(52.dp).clip(Shape14).background(colors.surfaceVariant).border(1.dp, pal.line2, Shape14),
-            ) { Icon(Icons.Outlined.DesktopWindows, contentDescription = null, tint = colors.onBackground, modifier = Modifier.size(26.dp)) }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.content_linux_desktop), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
-                Text(stringResource(R.string.content_linux_desktop_hint), fontSize = 14.sp, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    // The button goes under the title unless the card is wide enough for both side by side: in some
+    // languages its label alone takes half a small phone's pane.
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow = LocalNarrowPane.current || maxWidth < DesktopCardInlineWidth
+        Column(
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth().clip(Shape16).background(colors.surface).border(1.dp, pal.line, Shape16).padding(16.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(52.dp).clip(Shape14).background(colors.surfaceVariant).border(1.dp, pal.line2, Shape14),
+                ) { Icon(Icons.Outlined.DesktopWindows, contentDescription = null, tint = colors.onBackground, modifier = Modifier.size(26.dp)) }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.content_linux_desktop), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
+                    Text(stringResource(R.string.content_linux_desktop_hint), fontSize = 14.sp, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                if (!narrow) actions()
             }
-            if (!narrow) actions()
+            if (narrow) actions()
         }
-        if (narrow) actions()
     }
 }
+
+/** How wide the desktop card must be to keep its button beside the title. */
+private val DesktopCardInlineWidth = 640.dp
 
 /** What the Desktop page's grids hold: emulators, the user's own apps, and Add at the end. */
 private sealed class GridItem(val key: String) {
@@ -457,25 +465,33 @@ private sealed class GridItem(val key: String) {
     data object Add : GridItem("add")
 }
 
-/** Wide tiles - three across, or a list on a narrow page. */
+/** Wide tiles - three across, two on a small phone, or a list on a narrow page. */
 @Composable
 private fun LauncherGrid(items: List<GridItem>, first: Boolean, onSelect: (String) -> Unit, onAdd: () -> Unit = {}) {
-    val columns = if (LocalNarrowPane.current) 1 else 3
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
-        items.chunked(columns).forEachIndexed { r, row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-                row.forEachIndexed { i, item ->
-                    key(item.key) {
-                        val m = Modifier.weight(1f).fillMaxHeight()
-                        val isFirst = first && r == 0 && i == 0
-                        when (item) {
-                            is GridItem.Emu -> EmulatorTile(item.e, m, isFirst) { onSelect(item.key) }
-                            is GridItem.User -> UserAppTile(item.app, m, isFirst) { onSelect(item.key) }
-                            GridItem.Add -> AddTile(m, isFirst, onAdd)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // A tile holds an icon, a name and an Install button: one much under 230dp wide leaves the
+        // name no room at all.
+        val columns = when {
+            LocalNarrowPane.current -> 1
+            maxWidth < 720.dp -> 2
+            else -> 3
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
+            items.chunked(columns).forEachIndexed { r, row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                    row.forEachIndexed { i, item ->
+                        key(item.key) {
+                            val m = Modifier.weight(1f).fillMaxHeight()
+                            val isFirst = first && r == 0 && i == 0
+                            when (item) {
+                                is GridItem.Emu -> EmulatorTile(item.e, m, isFirst) { onSelect(item.key) }
+                                is GridItem.User -> UserAppTile(item.app, m, isFirst) { onSelect(item.key) }
+                                GridItem.Add -> AddTile(m, isFirst, onAdd)
+                            }
                         }
                     }
+                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
-                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -661,10 +677,14 @@ private fun UpdateButton(app: UserApps.App, s: FrontEndState) {
  * contrast - dimming it read as disabled rather than one press from installing.
  */
 @Composable
+private fun systemLabel(e: Library.Emulator): String =
+    if (e.systemRes != 0) stringResource(e.systemRes) else e.system.replaceFirstChar { it.uppercase() }
+
+@Composable
 private fun EmulatorTile(e: Library.Emulator, modifier: Modifier, isFirst: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
-    val system = e.system.replaceFirstChar { it.uppercase() }
+    val system = systemLabel(e)
     val detail = if (e.installed && e.id != "retroarch") "$system · " + pluralStringResource(R.plurals.mode_added_count, e.games.size, e.games.size) else system
     TileFrame("emu:${e.id}", modifier, isFirst, filled = e.installed, onClick = onClick) {
         Image(painterResource(e.iconRes), contentDescription = null, modifier = Modifier.size(if (e.installed) 44.dp else 36.dp))

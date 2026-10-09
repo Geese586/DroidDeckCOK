@@ -1,5 +1,6 @@
 """Reject an APK with missing or stale session helpers, including cached local bundles."""
 from pathlib import Path
+import hashlib
 import sys
 from zipfile import ZipFile
 
@@ -41,7 +42,57 @@ NATIVE = (
     'assets/linuxfs/usr/lib/firefox/defaults/pref/droiddeck.js',
     'assets/droiddeck-esync/index.json',
     'assets/droiddeck-esync/index.json.sig',
+    # The Linux payload's own later additions, which a checkout that never re-ran the cross build
+    # lacks: the SSBS preload a game's environment can ask for, and the msitools set the Windows
+    # component installer drives.
+    'assets/linuxfs/libssbs.so',
+    'assets/linuxfs/usr/local/lib/droiddeck-msitools/msiinfo',
+    'assets/linuxfs/usr/local/lib/droiddeck-msitools/cabextract',
+    # The helper that owns Android's output stream when the client or a game is put on the
+    # DirectAudio relay. Its absence is silent in the same way: the relay part is added to the
+    # session and then has no program to run.
+    'lib/arm64-v8a/libdirectaudiorelay.so',
 )
+
+# The daemon's sink modules ride inside the audio bundle, and CI compiles two of them in while it
+# builds (build.yml, "Build the AAudio sink into the audio bundle") - they are not in the bundle
+# the source tree carries. A build that skips that step, as a plain gradle one does, ships the
+# older bundle whose only sink is module-aaudio-classic-sink.so; the daemon then fails
+# "load-module module-aaudio-sink", no sink exists, and the client's Settings and every game come
+# up with "no output device" - while every other check here passes. Pin the bundle CI produces,
+# and unpack it to name what is missing when the pin does not match.
+PULSE_BUNDLE = 'assets/pulseaudio.tzst'
+PULSE_BUNDLE_SHA256 = 'ae8a394e381c8c4592f158e45ad4ec74a317bb93462e9ce3618d7dc897ea544a'
+PULSE_MODULES = (
+    'modules/arm64/module-aaudio-sink.so',
+    'modules/arm64/module-directaudio-sink.so',
+)
+
+
+def audio_bundle_problem(content):
+    """What the daemon will not find in this audio bundle, or None when it is usable."""
+    if hashlib.sha256(content).hexdigest() == PULSE_BUNDLE_SHA256:
+        return None
+    try:
+        import io
+        import tarfile
+        import zstandard
+    except ImportError:
+        return (PULSE_BUNDLE + ' is not the bundle this fork builds with (sha256 '
+                + hashlib.sha256(content).hexdigest() + ', expected ' + PULSE_BUNDLE_SHA256
+                + '), and the zstandard module is not here to say more. The sink module it has to '
+                'carry is probably missing, and the session would come up with no output device.')
+    present = set()
+    reader = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(content))
+    with tarfile.open(fileobj=reader, mode='r|') as tar:
+        for member in tar:
+            present.add(member.name[2:] if member.name.startswith('./') else member.name)
+    missing = [name for name in PULSE_MODULES if name not in present]
+    if not missing:
+        return None
+    return (PULSE_BUNDLE + ' carries no ' + ', '.join(missing) + ', so the daemon cannot load the '
+            'sink the session asks for and the client reports no output device. Re-run '
+            'tools/build_local.sh, or take the bundle out of the same version\'s release APK.')
 
 
 def check(apk, overlay=OVERLAY):
@@ -63,6 +114,14 @@ def check(apk, overlay=OVERLAY):
         for name in NATIVE:
             if name not in present:
                 errors.append('missing ' + name)
+        try:
+            bundle = package.read(PULSE_BUNDLE)
+        except KeyError:
+            errors.append('missing ' + PULSE_BUNDLE)
+        else:
+            problem = audio_bundle_problem(bundle)
+            if problem:
+                errors.append(problem)
     return errors
 
 
