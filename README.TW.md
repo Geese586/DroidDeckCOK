@@ -19,7 +19,7 @@
 中文說明安裝教學影片地址B站：
 https://www.bilibili.com/video/BV1XAHd6PEKT/?vd_source=55a7f582a98d214a03f037a275fc90b3#reply320122768208
 
-中文說明安裝教學影片地址B站：
+中文說明安裝教學影片地址Youtube：
 https://www.youtube.com/watch?v=ND505ZGazeA
 
 DroidDeck 把 SteamOS 的體驗搬到 Android：在 Adreno 掌機上跑 Valve 的 Steam 用戶端（Big Picture 大螢幕介面），Windows 遊戲走 Valve 的 ARM64 Proton。
