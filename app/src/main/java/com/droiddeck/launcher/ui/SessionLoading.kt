@@ -94,19 +94,29 @@ fun HudText(text: String) {
     }
 }
 
-/** One line of the loading screen's checklist; [detail] is what it says while it is the one running. */
-private class LoadStage(@androidx.annotation.StringRes val label: Int, @androidx.annotation.StringRes val detail: Int)
+/**
+ * One line of the loading screen's checklist; [detail] is what it says while it is the one running,
+ * and [dragging] what it says once that has taken long enough to need saying.
+ */
+private class LoadStage(
+    @androidx.annotation.StringRes val label: Int,
+    @androidx.annotation.StringRes val detail: Int,
+    @androidx.annotation.StringRes val dragging: Int? = null,
+)
 
 private fun loadStages(steam: Boolean): List<LoadStage> = if (steam) listOf(
     LoadStage(R.string.load_runtime, R.string.load_runtime_detail),
     LoadStage(R.string.load_session, R.string.load_session_detail),
     LoadStage(R.string.load_steam, R.string.load_steam_detail),
-    LoadStage(R.string.load_opening_steam, R.string.load_opening_steam_detail),
+    LoadStage(R.string.load_opening_steam, R.string.load_opening_steam_detail, R.string.load_opening_steam_slow),
 ) else listOf(
     LoadStage(R.string.load_runtime, R.string.load_runtime_detail),
     LoadStage(R.string.load_desktop, R.string.load_desktop_detail),
     LoadStage(R.string.load_opening, R.string.load_opening_detail),
 )
+
+/** How long the last stage runs before it stops assuming the next second is the one. */
+private const val DRAGGING_AFTER_SECONDS = 45
 
 /**
  * The checklist stage a loading line's [topic] belongs to, -1 when it says nothing about the stage.
@@ -127,7 +137,10 @@ fun LoadingOverlay(
     step: String, percent: Int, elapsed: String, hint: String, ended: Boolean,
     /** What [step] is about, and whether it is a download or install line worth showing as it is (see [LoadingState]). */
     topic: LoadingState.Topic, readable: Boolean,
-    title: String = stringResource(R.string.load_starting_steam), steam: Boolean = true, onCancel: (() -> Unit)? = null,
+    /** How long the stage in [topic] has been running, so a long one can say more about itself. */
+    stageSeconds: Int = 0,
+    /** One headline per checklist stage, in the same order as the stages [steam] selects. */
+    titles: List<String>, steam: Boolean = true, onCancel: (() -> Unit)? = null,
     /** An ended session's exit status and log path, shown small under the advice. */
     endedDetail: String? = null,
     onRetry: (() -> Unit)? = null,
@@ -146,7 +159,16 @@ fun LoadingOverlay(
         if (at > reached) reached = at
     }
     val active = reached.coerceAtMost(stages.lastIndex)
-    val detail = if (percent >= 0 || readable) step.replaceFirstChar { it.uppercase() } else stringResource(stages[active].detail)
+    val title = titles.getOrElse(active) { titles.lastOrNull().orEmpty() }
+    // A stage that has been running for a while without anything to show for it says what it is
+    // waiting on, rather than repeating the promise it cannot keep: the screen cannot be still and
+    // say nothing, which is what makes a slow first launch look like a hang.
+    val dragging = !ended && active == stages.lastIndex && stageSeconds >= DRAGGING_AFTER_SECONDS
+    val detail = when {
+        percent >= 0 || readable -> step.replaceFirstChar { it.uppercase() }
+        dragging -> stringResource(stages[active].dragging ?: stages[active].detail)
+        else -> stringResource(stages[active].detail)
+    }
     val context = LocalContext.current
     // The Steam tab's wall behind it, dimmed and slowed: starting Steam reads as the same place settling in.
     val games by produceState(emptyList<Library.SteamGame>()) {
@@ -194,6 +216,12 @@ fun LoadingOverlay(
                 modifier = Modifier.padding(top = 6.dp).widthIn(max = 520.dp),
             )
             if (!ended) LoadSegments(stages.size, active, percent, Modifier.padding(top = 18.dp))
+            // The clock, so a quiet stretch still reads as work going on rather than a hang.
+            if (!ended && elapsed.isNotEmpty()) Text(
+                elapsed, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 12.dp),
+            )
             if (ended && endedDetail != null) Text(
                 endedDetail, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,

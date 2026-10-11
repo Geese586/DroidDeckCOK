@@ -965,6 +965,16 @@
     <string name="load_ended">The session ended</string>
     <string name="load_step">Step %1$d of %2$d</string>
     <string name="load_steam_paused">Steam is paused</string>
+    <string name="load_title_runtime">Preparing the Linux runtime</string>
+    <string name="load_title_session">Starting the session</string>
+    <string name="load_title_steam">Checking Steam</string>
+    <string name="load_title_opening_steam">Opening Steam</string>
+    <string name="load_client_check">Checking the Steam client for an update</string>
+    <string name="load_client_download">Downloading the Steam client update</string>
+    <string name="load_client_install">Installing the Steam client update</string>
+    <string name="load_client_verify">Checking the Steam client\'s files</string>
+    <string name="load_client_failed">The Steam client can\'t reach its update server - check the network</string>
+    <string name="load_opening_steam_slow">Steam is taking a while: its first launch unpacks and updates the client, which can take minutes</string>
     <string name="deck_tab_grips">Grips</string>
     <string name="deck_tab_left">Left pad</string>
     <string name="deck_tab_right">Right pad</string>
@@ -1730,9 +1740,10 @@
     <string name="loadstate_starting">Starting the session…</string>
     <!-- %1$d minutes, %2$02d seconds since the session started -->
     <string name="loadstate_elapsed">%1$d:%2$02d elapsed · still working</string>
-    <string name="loadstate_steam_update">Downloading the Steam client update · %1$d%%</string>
+    <string name="loadstate_steam_update">Downloading the Steam client update · %1$s</string>
     <!-- %1$s is the client's own download progress, as it prints it -->
     <string name="loadstate_steam_client">Downloading the Steam client · %1$s</string>
+    <string name="loadstate_steam_unpack">Unpacking the Steam client · %1$s</string>
 
     <!-- Installing GE-Proton / proton-cachyos (%1$s is the tool's name, %2$s its release tag) -->
     <string name="pextra_busy">A compatibility tool install is already running</string>

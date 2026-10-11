@@ -2,7 +2,79 @@
 # Fetches the native arm64 Steam client from Valve's client-update CDN into ~/.local/share/Steam.
 # The client is not redistributable, so the runtime ships this script instead of the client.
 set -eu
-cdn=https://client-update.fastly.steamstatic.com
+# Valve serves the same packages from more than one set of edge hosts, and both the speed and the
+# reachability of each are properties of the network the device is on rather than of the device. A
+# component one of them will not serve is therefore tried on the next, which is the difference
+# between an install and "the download never started". BL_STEAM_CDN pins a single host - a host
+# name, or a full URL including the scheme - and is then used alone, because a pinned host is a
+# deliberate override rather than a preference.
+cdn_fastly=https://client-update.fastly.steamstatic.com
+cdn_akamai=https://client-update.akamai.steamstatic.com
+bl_cdn_hosts() {
+  case ${BL_STEAM_CDN:-} in
+    "") printf '%s\n%s\n' "$cdn_fastly" "$cdn_akamai" ;;
+    fastly|official) printf '%s\n' "$cdn_fastly" ;;
+    akamai) printf '%s\n' "$cdn_akamai" ;;
+    *) printf '%s\n' "$BL_STEAM_CDN" ;;
+  esac
+}
+# How far along the download is, as a line the loading screen shows. The per-component counter
+# only moves when a component finishes, and one component is 105 MB - the screen would sit on the
+# same count for a minute. Fractions of a percent, so the number creeps instead of jumping: a
+# screen that is visibly counting up is the difference between "this is working" and "this is
+# stuck", which is the whole reason the line exists.
+bl_have=0
+bl_total=0
+bl_shown=-1
+bl_progress() {
+  [ "${bl_total:-0}" -gt 0 ] || return 0
+  local now=$(( (bl_have + ${1:-0}) * 1000 / bl_total ))
+  if [ "$now" -gt "$bl_shown" ]; then
+    bl_shown=$now
+    printf '== PROGRESS %d.%d\n' $((now / 10)) $((now % 10))
+  fi
+  return 0
+}
+# Backgrounded only so that the file being written can be measured while it is being written; a
+# component that takes minutes should move the number while it runs rather than when it lands.
+bl_download() {
+  local pid seen
+  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 "$1" -o "$2" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    seen=$(wc -c < "$2" 2>/dev/null || echo 0)
+    bl_progress "${seen:-0}"
+  done
+  wait "$pid"
+}
+# One file, from whichever host will serve it. Moving on to the next host is announced as a
+# "== STEP" line: on screen a retry on the other edge reads as the wait making progress, where
+# going quiet for another two minutes reads as a hang.
+bl_fetch() {
+  local file=$1 dest=$2 host first=1
+  for host in $(bl_cdn_hosts); do
+    if [ "$first" = 1 ]; then
+      first=0
+    else
+      echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $file (again, from ${host#https://})"
+    fi
+    if bl_download "$host/$file" "$dest"; then return 0; fi
+  done
+  echo "droiddeck-steam-install: $file came down from no CDN host" >&2
+  return 1
+}
+# Component sizes are in the manifest, and a component that takes minutes to come down should say
+# how big it is: "105 MB" explains a wait that a file name does not.
+bl_size() {
+  case ${1:-} in
+    ''|*[!0-9]*) echo "?" ;;
+    *) if [ "$1" -ge 1048576 ]; then echo "$(($1 / 1048576)) MB"
+       elif [ "$1" -ge 1024 ]; then echo "$(($1 / 1024)) KB"
+       else echo "$1 B"
+       fi ;;
+  esac
+}
 # A directory holding packages fetched somewhere else - a desktop, a faster network - so the
 # client can be installed without waiting on Valve's CDN. Every piece found there is used as it
 # is and the rest is still downloaded, so a partly-filled directory installs; BL_STEAM_LOCAL_ONLY
@@ -46,48 +118,104 @@ if [ -n "$repair" ]; then
     [ "$(sha1sum "$part" | cut -d' ' -f1)" = "$sum" ] || rm -f "$part"
   done
 fi
-[ -x "$steam_root/steamrtarm64/steam" ] && [ -f "$stamp" ] && exit 0
+# Already in. The client's own record of which build it has lives in package/, beside the packages
+# themselves, and its bootstrapper reads that record on every single start: it is what it compares
+# against Valve's before deciding whether the client has to be fetched, unpacked or verified. An
+# install made before this script wrote one left the bootstrapper with nothing on the disk to
+# recognise, so it went to Valve every launch - a manifest, and then whatever had changed since -
+# for a client that was already there. Backfilled from the folder, which is where it can come from
+# without a network.
+if [ -x "$steam_root/steamrtarm64/steam" ] && [ -f "$stamp" ]; then
+  if [ ! -f "$steam_root/package/$manifest.manifest" ] && [ -n "$local_dir" ] \
+      && [ -f "$local_dir/$manifest" ]; then
+    cp -f "$local_dir/$manifest" "$steam_root/package/$manifest.manifest"
+    echo "== STEP $(date -u +%H:%M:%S) wrote the client's own record of what is installed"
+  fi
+  exit 0
+fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-if [ -n "$local_dir" ] && [ -f "$local_dir/$manifest" ]; then
-  echo "== STEP $(date -u +%H:%M:%S) reading the Steam manifest from the local copy"
-  cp -f "$local_dir/$manifest" "$work/manifest"
-elif [ -n "$local_only" ]; then
-  echo "droiddeck-steam-install: $manifest is not in $local_dir and the device is offline" >&2
-  exit 1
+# Which manifest the install follows. Valve's current one wins whenever it is reachable and newer
+# than the folder's: a folder filled last week names last week's components, and installing from
+# it alone would put a stale client on the device only for the client to update itself from the
+# same CDN - over the same slow link - a minute later. With Valve's manifest in hand the folder
+# still supplies every component whose name has not changed, so an update costs the components
+# that actually changed and nothing else. The folder's own manifest is what an offline device
+# installs from, and it is also the fallback when Valve cannot be reached.
+local_manifest=
+if [ -n "$local_dir" ] && [ -f "$local_dir/$manifest" ]; then local_manifest=$local_dir/$manifest; fi
+manifest_version() { awk -F'"' '$2 == "version" { print $4; exit }' "$1"; }
+if [ -n "$local_only" ]; then
+  [ -n "$local_manifest" ] || {
+    echo "droiddeck-steam-install: $manifest is not in $local_dir and the device is offline" >&2; exit 1; }
+  echo "== STEP $(date -u +%H:%M:%S) reading the Steam client manifest from the local copy (offline)"
+  cp -f "$local_manifest" "$work/manifest"
+elif bl_fetch "$manifest" "$work/manifest"; then
+  if [ -n "$local_manifest" ]; then
+    local_version=$(manifest_version "$local_manifest")
+    if [ -n "$local_version" ] && [ "$(manifest_version "$work/manifest")" -le "$local_version" ] 2>/dev/null; then
+      echo "== STEP $(date -u +%H:%M:%S) the local Steam client copy is current ($local_version)"
+      cp -f "$local_manifest" "$work/manifest"
+    else
+      echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client is newer ($local_version -> $(manifest_version "$work/manifest")); taking only the changed components from it"
+    fi
+  else
+    echo "== STEP $(date -u +%H:%M:%S) reading Valve's Steam client manifest"
+  fi
+elif [ -n "$local_manifest" ]; then
+  echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client manifest is unreachable; installing from the local copy"
+  cp -f "$local_manifest" "$work/manifest"
 else
-  curl -fsSL "$cdn/$manifest" -o "$work/manifest"
+  echo "droiddeck-steam-install: could not read $manifest from Valve or from $local_dir" >&2
+  exit 1
 fi
-version=$(awk -F'"' '$2 == "version" { print $4; exit }' "$work/manifest")
-# Every component block: its name, then the plain zip's file name and sha256.
+version=$(manifest_version "$work/manifest")
+# Every component block: its name, then the plain zip's file name, size and sha256.
 awk -F'"' '
   /^\t"/ && NF >= 3 && $4 == "" { block = $2 }
   $2 == "file" { file[block] = $4 }
+  $2 == "size" { size[block] = $4 }
   $2 == "sha2" { sha[block] = $4 }
-  END { for (b in file) if (b ~ /_all$/ || b ~ /_linuxarm64_linuxarm64$/) print b, file[b], sha[b] }
+  END { for (b in file) if (b ~ /_all$/ || b ~ /_linuxarm64_linuxarm64$/) print b, file[b], size[b], sha[b] }
 ' "$work/manifest" | sort > "$work/parts"
 [ -s "$work/parts" ] || { echo "droiddeck-steam-install: no client components in $manifest" >&2; exit 1; }
 total=$(grep -c . "$work/parts" 2>/dev/null || echo 0)
+# Bytes across every component, which is what the progress line counts against. Taken from the
+# manifest up front, so the percentage is right before the first byte arrives instead of growing
+# as the install goes.
+bl_total=$(awk '{ s += $3 } END { printf "%d", s + 0 }' "$work/parts")
+bl_total=${bl_total:-0}
+
+# A local copy is exactly as likely to be truncated as a download, so one that fails its checksum
+# is treated as absent and fetched instead of failing the install.
+bl_intact() { echo "$2  $1" | sha256sum -c --quiet >/dev/null 2>&1; }
 
 mkdir -p "$steam_root/package"
-while read -r block file sum; do
+while read -r block file size sum; do
   i=$((${i:-0} + 1))
-  if [ -n "$local_dir" ] && [ -f "$local_dir/$file" ]; then
+  if [ -n "$local_dir" ] && [ -f "$local_dir/$file" ] && bl_intact "$local_dir/$file" "$sum"; then
     echo "== STEP $(date -u +%H:%M:%S) unpacking Steam from the local copy: $block ($i/$total)"
     cp -f "$local_dir/$file" "$work/$file"
   elif [ -n "$local_only" ]; then
     echo "droiddeck-steam-install: $block ($file) is not in $local_dir and the device is offline" >&2
     exit 1
   else
-    echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $block ($i/$total)"
-    curl -fsSL "$cdn/$file" -o "$work/$file"
+    echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $block ($i/$total, $(bl_size "$size"))"
+    bl_fetch "$file" "$work/$file"
   fi
   # Checksummed wherever it came from: the manifest names the sha256 of every component, and a
   # local copy is exactly as likely to be truncated or to be the wrong build's file as a download.
   echo "$sum  $work/$file" | sha256sum -c --quiet
-  unzip -qo "$work/$file" -d "$steam_root"
-  rm -f "$work/$file"
+  case $size in ''|*[!0-9]*) ;; *) bl_have=$((bl_have + size)) ;; esac
+  # Kept in package/ rather than deleted. The client's own updater looks for exactly this name
+  # there - the sha1 in it is the file's own - before it downloads anything, and the packages in
+  # this script are the same packages: with them in place it unpacks and applies them, writes its
+  # own bookkeeping (package/steam_client_*.installed) and starts, where without them it fetches
+  # the whole 344 MB again over the link the folder exists to avoid. Valve replacing a component
+  # changes its name, so an update costs the components that changed and reuses the rest.
+  mv -f "$work/$file" "$steam_root/package/$file"
+  unzip -qo "$steam_root/package/$file" -d "$steam_root"
 done < "$work/parts"
 # Some entries are zipped with Windows separators; unzip keeps the backslash in the file name.
 find "$steam_root" -depth -name '*\\*' | while read -r odd; do
@@ -116,6 +244,13 @@ ln -sfn "$steam_root/linuxarm64" "$HOME/.steam/sdk64"
 ln -sfn "$steam_root/linuxarm64" "$HOME/.steam/sdkarm64"
 ln -sfn "$steam_root/steamrtarm64" "$HOME/.steam/binarm64"
 ln -sfn "$steam_root/linux32" "$HOME/.steam/sdk32"
+# The record the client's own bootstrapper reads before it decides anything, written from the
+# manifest this install actually followed so that the record and the packages kept in package/
+# agree with each other. With it the next start has nothing to ask Valve for: it verifies what is
+# here, writes its own list of installed files (package/steam_client_*.installed) and launches.
+# Without it, the only thing it can do is install the client again - on every launch, over the
+# network, for a client that is already unpacked on the disk.
+cp -f "$work/manifest" "$steam_root/package/$manifest.manifest"
 echo "$version" > "$stamp"
 if [ -n "$repair" ]; then
   echo repaired > "$unconfirmed"

@@ -389,6 +389,21 @@ class SessionService : Service() {
             if (com.droiddeck.launcher.gpu.Lossless.owned(this)) guest.add("BL_LOSSLESS_OWNED=1")
             if (added.isNotEmpty()) Log.i(TAG, "added games: " + added.joinToString { "${it.name} (${it.exe.name})" })
         }
+        // The folder the user's local one-key install read from. The session's own install takes
+        // every component that folder holds and downloads only the rest, so a device whose
+        // packages were fetched on a desktop - the one place the CDN is both fast and reachable -
+        // does not fetch them again here.
+        //
+        // While the client is not in, that is the whole reason the folder is passed: the install
+        // has something local to read instead of downloading all 344 MB over the link the folder
+        // exists to avoid. Once the client is installed the folder stays out of it - the install
+        // exits before it looks at one, and there is nothing to gain by risking a stale one.
+        if (steamHere && !SteamClient.installed(this)) {
+            FirstLocalInstall.rememberedFolder(this)?.takeIf { it.isDirectory }?.let {
+                guest.add("BL_STEAM_LOCAL_DIR=" + it.absolutePath)
+                Log.i(TAG, "steam: installing from the local folder " + it.absolutePath)
+            }
+        }
         // Where the guest leaves a request for another session (the desktop's Steam launchers).
         guest.add("BL_LAUNCH_DIR=" + sessionRoot.path)
         // The second library's name, for droiddeck-steam-library; the bind itself is made below.

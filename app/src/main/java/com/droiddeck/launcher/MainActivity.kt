@@ -384,6 +384,25 @@ class MainActivity : ComponentActivity() {
     private var fexPreset by mutableStateOf("")
     private var forceSsbs by mutableStateOf(false)
     private var steamChannel by mutableStateOf("steamdeck_publicbeta")
+    /**
+     * Which copy of the app this is: the version, and when the APK that is running was written.
+     * Every build of this fork keeps the same version on purpose (00Design/custom-changes), so it
+     * is that time - not the version - that tells two builds apart. Shown in the mode settings so
+     * a device's build can be named from the device itself.
+     */
+    private val buildStamp: String by lazy {
+        val parts = mutableListOf<String>()
+        try {
+            packageManager.getPackageInfo(packageName, 0).versionName?.let { parts += it }
+        } catch (e: Exception) {
+        }
+        try {
+            parts += java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+                .format(java.util.Date(File(applicationInfo.sourceDir).lastModified()))
+        } catch (e: Exception) {
+        }
+        parts.joinToString(" - ")
+    }
     private var runSteamAtStartup by mutableStateOf(false)
     private var theme by mutableStateOf("graphite")
     private var appScale by mutableStateOf(com.droiddeck.launcher.core.AppUiPrefs.DEFAULT_SCALE)
@@ -1330,6 +1349,7 @@ class MainActivity : ComponentActivity() {
                 syncBackend = if (mode == SessionService.MODE_STEAM) SessionPrefs.syncBackendOf(fastSync, fsyncFirst, syncFallback) else null,
                 steamChannel = if (mode == SessionService.MODE_STEAM) steamChannel else null,
                 steamDeckMode = mode == SessionService.MODE_STEAM && steamDeckMode,
+                buildStamp = buildStamp,
                 steamRepairQueued = steamRepairQueued,
                 mangoapp = mangoapp,
                 steamController = if (mode == SessionService.MODE_STEAM) steamController else null,

@@ -957,6 +957,16 @@
     <string name="load_ended">セッションが終了しました</string>
     <string name="load_step">ステップ %1$d / %2$d</string>
     <string name="load_steam_paused">Steam一時停止中</string>
+    <string name="load_title_runtime">Linux ランタイムを準備しています</string>
+    <string name="load_title_session">セッションを開始しています</string>
+    <string name="load_title_steam">Steam を確認しています</string>
+    <string name="load_title_opening_steam">Steam を開いています</string>
+    <string name="load_client_check">Steam クライアントの更新を確認しています</string>
+    <string name="load_client_download">Steam クライアントの更新をダウンロードしています</string>
+    <string name="load_client_install">Steam クライアントの更新をインストールしています</string>
+    <string name="load_client_verify">Steam クライアントのファイルを確認しています</string>
+    <string name="load_client_failed">Steam が更新サーバーに接続できません - ネットワークを確認してください</string>
+    <string name="load_opening_steam_slow">Steam の起動に時間がかかっています。初回起動ではクライアントの展開と更新が必要で、数分かかることがあります</string>
     <string name="deck_tab_grips">グリップ</string>
     <string name="deck_tab_left">左トラックパッド</string>
     <string name="deck_tab_right">右トラックパッド</string>
@@ -1801,10 +1811,11 @@
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
     <string name="loadstate_elapsed">%1$d:%2$02d 経過 · 処理中</string>
-    <string name="loadstate_steam_update">Steamクライアントのアップデートをダウンロード中 · %1$d%%</string>
+    <string name="loadstate_steam_update">Steamクライアントのアップデートをダウンロード中 · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
     <string name="loadstate_steam_client">Steamクライアントをダウンロード中 · %1$s</string>
+    <string name="loadstate_steam_unpack">Steamクライアントを展開中 · %1$s</string>
 
     <!-- Installing GE-Proton / proton-cachyos (%1$s is the tool's name, %2$s its release tag) -->
     <string name="pextra_busy">互換性ツールのインストールはすでに実行中です</string>

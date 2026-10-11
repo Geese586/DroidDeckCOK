@@ -469,7 +469,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                 if (loading.visible) LoadingOverlay(
                     loading.step, loading.percent, loading.elapsed, loading.hint, loading.ended,
                     topic = loading.topic, readable = loading.readable,
-                    title = loadingTitle(), steam = loadingMode() == SessionService.MODE_STEAM,
+                    stageSeconds = loading.stageSeconds,
+                    titles = loadingTitles(), steam = loadingMode() == SessionService.MODE_STEAM,
                     // As the drawer's Stop does: the service stops, and a start still installing is cancelled.
                     onCancel = { SessionService.stop(this@SessionActivity); finish() },
                     endedDetail = loading.endedDetail,
@@ -752,6 +753,19 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         }
         else -> getString(R.string.load_starting_steam)
     }
+
+    /**
+     * One headline per checklist stage. A Steam session's runs long enough to be worth naming what
+     * it is on - its stages are the runtime, the session, the client's own checks and then the
+     * client starting, and the last of those can be minutes - where the desktop and a program get
+     * their own title for all three.
+     */
+    private fun loadingTitles(): List<String> = if (loadingMode() == SessionService.MODE_STEAM) listOf(
+        getString(R.string.load_title_runtime),
+        getString(R.string.load_title_session),
+        getString(R.string.load_title_steam),
+        getString(R.string.load_title_opening_steam),
+    ) else List(3) { loadingTitle() }
 
     private fun shareCurrentSessionLogs() {
         // Once a session has ended its folder has been handed on (SessionPaths.take), and the

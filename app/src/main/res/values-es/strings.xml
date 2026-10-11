@@ -965,6 +965,16 @@
     <string name="load_ended">La sesión terminó</string>
     <string name="load_step">Paso %1$d de %2$d</string>
     <string name="load_steam_paused">Steam está en pausa</string>
+    <string name="load_title_runtime">Preparando el entorno de Linux</string>
+    <string name="load_title_session">Iniciando la sesión</string>
+    <string name="load_title_steam">Comprobando Steam</string>
+    <string name="load_title_opening_steam">Abriendo Steam</string>
+    <string name="load_client_check">Comprobando si el cliente de Steam tiene actualización</string>
+    <string name="load_client_download">Descargando la actualización del cliente de Steam</string>
+    <string name="load_client_install">Instalando la actualización del cliente de Steam</string>
+    <string name="load_client_verify">Comprobando los archivos del cliente de Steam</string>
+    <string name="load_client_failed">Steam no puede conectar con su servidor de actualizaciones - revisa la red</string>
+    <string name="load_opening_steam_slow">Steam tarda en arrancar: el primer inicio descomprime y actualiza el cliente, y puede tardar varios minutos</string>
     <string name="deck_tab_grips">Agarres</string>
     <string name="deck_tab_left">Pad izquierdo</string>
     <string name="deck_tab_right">Pad derecho</string>
@@ -1839,10 +1849,11 @@
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
     <string name="loadstate_elapsed">%1$d:%2$02d transcurridos · sigue en marcha</string>
-    <string name="loadstate_steam_update">Descargando la actualización del cliente de Steam · %1$d%%</string>
+    <string name="loadstate_steam_update">Descargando la actualización del cliente de Steam · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
     <string name="loadstate_steam_client">Descargando el cliente de Steam · %1$s</string>
+    <string name="loadstate_steam_unpack">Desempaquetando el cliente de Steam · %1$s</string>
 
     <!-- Installing GE-Proton / proton-cachyos (%1$s is the tool's name, %2$s its release tag) -->
     <string name="pextra_busy">Ya se está instalando una herramienta de compatibilidad</string>

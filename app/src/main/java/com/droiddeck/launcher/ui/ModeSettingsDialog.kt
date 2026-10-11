@@ -92,6 +92,13 @@ class ModeSettings(
     val steamChannel: String? = null,
     /** Steam only: enable the SteamOS client interface and its performance controls. */
     val steamDeckMode: Boolean = false,
+    /**
+     * Which copy of the app this is: its version, and when the APK now running was written. Every
+     * build of this fork keeps the same version on purpose (00Design/custom-changes), so that time
+     * is the only thing that tells two builds apart - and the answer to "did the build I just
+     * installed actually take".
+     */
+    val buildStamp: String = "",
     val steamRepairQueued: Boolean = false,
     /** Steam, Deck mode: the QAM's performance overlay (mangoapp) is started. */
     val mangoapp: Boolean = true,
@@ -436,6 +443,10 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
             ) {
                 SecondaryButton(stringResource(R.string.mode_steam_repair_button), enabled = !s.steamRepairQueued, onClick = a.onSteamRepair)
             }
+            // Which copy this is. The version is the same for every build of the fork by design, so
+            // the time the running APK was written is what names it - the only way to tell, without
+            // opening the file, that a device is on the build that was just handed over.
+            SettingsRow(stringResource(R.string.app_name), s.buildStamp) {}
             // The client itself, which the app cannot ship: a Steam session downloads it from
             // Valve the first time it runs. Same offer as the runtime's - install from a folder
             // of packages fetched elsewhere - for a network that cannot reach that CDN. Hidden

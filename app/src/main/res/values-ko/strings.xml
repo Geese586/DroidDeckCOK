@@ -957,6 +957,16 @@
     <string name="load_ended">세션 종료됨</string>
     <string name="load_step">%1$d / %2$d 단계</string>
     <string name="load_steam_paused">Steam 일시 중지됨</string>
+    <string name="load_title_runtime">Linux 런타임을 준비하는 중</string>
+    <string name="load_title_session">세션을 시작하는 중</string>
+    <string name="load_title_steam">Steam을 확인하는 중</string>
+    <string name="load_title_opening_steam">Steam을 여는 중</string>
+    <string name="load_client_check">Steam 클라이언트 업데이트를 확인하는 중</string>
+    <string name="load_client_download">Steam 클라이언트 업데이트를 내려받는 중</string>
+    <string name="load_client_install">Steam 클라이언트 업데이트를 설치하는 중</string>
+    <string name="load_client_verify">Steam 클라이언트 파일을 검사하는 중</string>
+    <string name="load_client_failed">Steam이 업데이트 서버에 연결하지 못했습니다 - 네트워크를 확인하세요</string>
+    <string name="load_opening_steam_slow">Steam이 아직 시작 중입니다. 첫 실행에는 클라이언트 압축 해제와 업데이트가 필요해 몇 분 걸릴 수 있습니다</string>
     <string name="deck_tab_grips">그립</string>
     <string name="deck_tab_left">왼쪽 터치패드</string>
     <string name="deck_tab_right">오른쪽 터치패드</string>
@@ -1801,10 +1811,11 @@
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
     <string name="loadstate_elapsed">%1$d:%2$02d 경과 · 아직 진행 중</string>
-    <string name="loadstate_steam_update">Steam 클라이언트 업데이트 다운로드 중 · %1$d%%</string>
+    <string name="loadstate_steam_update">Steam 클라이언트 업데이트 다운로드 중 · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
     <string name="loadstate_steam_client">Steam 클라이언트 다운로드 중 · %1$s</string>
+    <string name="loadstate_steam_unpack">Steam 클라이언트 압축 해제 중 · %1$s</string>
 
     <!-- Installing GE-Proton / proton-cachyos (%1$s is the tool's name, %2$s its release tag) -->
     <string name="pextra_busy">호환성 도구를 이미 설치하고 있습니다</string>

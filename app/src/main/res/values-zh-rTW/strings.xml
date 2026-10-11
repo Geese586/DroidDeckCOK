@@ -957,6 +957,16 @@
     <string name="load_ended">工作階段已結束</string>
     <string name="load_step">第 %1$d 步，共 %2$d 步</string>
     <string name="load_steam_paused">Steam 已暫停</string>
+    <string name="load_title_runtime">正在準備 Linux 執行環境</string>
+    <string name="load_title_session">正在啟動工作階段</string>
+    <string name="load_title_steam">正在檢查 Steam</string>
+    <string name="load_title_opening_steam">正在開啟 Steam</string>
+    <string name="load_client_check">正在檢查 Steam 用戶端是否有更新</string>
+    <string name="load_client_download">正在下載 Steam 用戶端更新</string>
+    <string name="load_client_install">正在安裝 Steam 用戶端更新</string>
+    <string name="load_client_verify">正在校驗 Steam 用戶端檔案</string>
+    <string name="load_client_failed">Steam 連不上更新伺服器 · 請檢查網路</string>
+    <string name="load_opening_steam_slow">Steam 仍在啟動：首次啟動要解壓並更新用戶端，可能要幾分鐘</string>
     <string name="deck_tab_grips">握把</string>
     <string name="deck_tab_left">左側觸控板</string>
     <string name="deck_tab_right">右側觸控板</string>
@@ -1801,10 +1811,11 @@
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
     <string name="loadstate_elapsed">已經過 %1$d:%2$02d · 仍在處理中</string>
-    <string name="loadstate_steam_update">正在下載 Steam 用戶端更新 · %1$d%%</string>
+    <string name="loadstate_steam_update">正在下載 Steam 用戶端更新 · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
     <string name="loadstate_steam_client">正在下載 Steam 用戶端 · %1$s</string>
+    <string name="loadstate_steam_unpack">正在解壓 Steam 用戶端 · %1$s</string>
 
     <!-- Installing GE-Proton / proton-cachyos (%1$s is the tool's name, %2$s its release tag) -->
     <string name="pextra_busy">已有相容性工具正在安裝</string>

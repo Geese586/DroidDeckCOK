@@ -337,7 +337,7 @@ case $mode in
     esac
     ;;
   steam)
-    step "checking the Steam client (first run downloads it, ~1-2 min with nothing on screen)"
+    step "checking the Steam client (a first run fetches it - the loading screen shows that progress)"
     droiddeck-steam-install || exit $?
     step "Steam client ready"
     steam_root=$XDG_DATA_HOME/Steam
