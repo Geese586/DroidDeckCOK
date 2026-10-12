@@ -33,6 +33,11 @@ object ProtonExtras {
     val tools = listOf(
         Tool("ge", "GE-Proton", "GE-Proton", "GloriousEggroll/proton-ge-custom", Regex("aarch64\\.tar\\.(gz|xz)$")),
         Tool("cachyos", "proton-cachyos", "proton-cachyos", "CachyOS/proton-cachyos", Regex("arm64\\.tar\\.(gz|xz)$")),
+        // DroidDeck's own ARM64 build: GE-Proton with seven tiers of Wine patches on top - Valve
+        // bleeding-edge, GE, CachyOS' game fixes, the Bannerlator portability fixes, DroidDeck's own
+        // esync, the SD card fixes and the media fixes. Released on its own schedule, so a row of its
+        // own. Its tree unpacks to "DroidDeck-Proton <version>", which the prefix still matches.
+        Tool("droiddeck", "DroidDeck-Proton", "DroidDeck-Proton", "Droid-Deck/DroidDeck-Proton", Regex("aarch64[.]tar[.]gz$")),
     )
 
     private fun home(context: Context) = File(LinuxRuntime.rootDir(context), "root")

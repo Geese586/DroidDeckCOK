@@ -334,6 +334,47 @@ class ProtonDefaultTest(unittest.TestCase):
         default, state = COMPAT["choose_default"]("GE-Proton11-7", state, {"seq": 9, "dir": "GE-Proton9-1", "valve": False}, self.CATALOG, now=2)
         self.assertEqual(default, "GE-Proton11-7")
 
+    # This fork's own Proton as an extra is listed: valve False, unpacked under its own directory
+    # ("DroidDeck-Proton 11-7.5" is the release's own name, space and all).
+    PREFERRED = CATALOG + [
+        {"name": "DroidDeck-Proton", "display": "DroidDeck-Proton", "dir": "DroidDeck-Proton 11-7.5", "valve": False},
+    ]
+
+    def test_the_forks_proton_is_the_default_while_nobody_has_picked(self):
+        # Carried over from a run made before it was installed, and a device's very first start
+        # alike: this fork's build is what games run on.
+        self.assertEqual(COMPAT["choose_default"](self.TOOL, {"default": self.TOOL}, {}, self.PREFERRED, now=1)[0], "DroidDeck-Proton")
+        self.assertEqual(COMPAT["choose_default"]("", {}, {}, self.PREFERRED, now=1)[0], "DroidDeck-Proton")
+        # And stays on, run after run, rather than being re-decided each time.
+        self.assertEqual(COMPAT["choose_default"]("DroidDeck-Proton", {"default": "DroidDeck-Proton"}, {}, self.PREFERRED, now=2)[0], "DroidDeck-Proton")
+
+    def test_a_device_without_it_still_gets_the_valve_depot(self):
+        self.assertEqual(COMPAT["choose_default"](self.TOOL, {"default": self.TOOL}, {}, self.CATALOG, now=1)[0], self.TOOL)
+        self.assertEqual(COMPAT["choose_default"]("", {}, {}, self.CATALOG, now=1)[0], self.TOOL)
+
+    def test_the_depots_of_ours_are_not_mistaken_for_the_forks_build(self):
+        # Both are named droiddeck-proton-*-arm64, so both start with the prefix; the flag is what
+        # keeps the Valve tool this runtime needs out of the search.
+        self.assertIsNone(COMPAT["preferred_tool"](self.CATALOG))
+
+    def test_a_pick_of_the_users_outranks_the_forks_proton(self):
+        # In the client's own menu, and in this app's Proton page: both are recorded, both stand.
+        default, state = COMPAT["choose_default"](self.TOOL, {"default": self.TOOL}, {}, self.PREFERRED, now=10)
+        self.assertEqual(default, "DroidDeck-Proton")
+        default, state = COMPAT["choose_default"]("GE-Proton11-7", state, {}, self.PREFERRED, now=11)
+        self.assertEqual((default, state["source"]), ("GE-Proton11-7", "steam"))
+        # The app's pick, with the client's config.vdf still holding it from the write that followed.
+        app = {"default": "GE-Proton11-7", "applied": 4, "source": "app"}
+        self.assertEqual(COMPAT["choose_default"]("GE-Proton11-7", app, {}, self.PREFERRED, now=12)[0], "GE-Proton11-7")
+
+    def test_a_pick_that_has_since_been_removed_falls_to_the_forks_proton(self):
+        # The recorded choice is not installed any more, so it is not a choice: the device gets the
+        # answer it would have had if it had never been made. A device without the fork's build gets
+        # the Valve depot, as before.
+        state = {"default": "GE-Proton9-1", "source": "app", "applied": 4}
+        self.assertEqual(COMPAT["choose_default"]("GE-Proton9-1", state, {}, self.PREFERRED, now=13)[0], "DroidDeck-Proton")
+        self.assertEqual(COMPAT["choose_default"]("GE-Proton9-1", state, {}, self.CATALOG, now=13)[0], self.TOOL)
+
     def test_settle_before_the_client_starts(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "config.vdf"

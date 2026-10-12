@@ -443,9 +443,11 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
             ) {
                 SecondaryButton(stringResource(R.string.mode_steam_repair_button), enabled = !s.steamRepairQueued, onClick = a.onSteamRepair)
             }
-            // Which copy this is. The version is the same for every build of the fork by design, so
-            // the time the running APK was written is what names it - the only way to tell, without
-            // opening the file, that a device is on the build that was just handed over.
+            // Which copy this is: the version, when the running APK was written, and this fork's
+            // own build number under it ("COK(0.3.2.3)"). The version is the upstream release this
+            // copy carries, so every build of that release reports the same one - the two lines
+            // below it are what name a build, and the only way to tell, without opening the file,
+            // that a device is on the build that was just handed over.
             SettingsRow(stringResource(R.string.app_name), s.buildStamp) {}
             // The client itself, which the app cannot ship: a Steam session downloads it from
             // Valve the first time it runs. Same offer as the runtime's - install from a folder

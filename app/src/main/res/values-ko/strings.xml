@@ -1208,6 +1208,11 @@
     <string name="drivers_not_a_driver">드라이버 zip이 아닙니다. AdrenoTools 드라이버, -Linux Turnip, Android + Linux 번들 중 어느 것도 아닙니다</string>
     <string name="drivers_import_failed">가져오기 실패: %1$s</string>
     <string name="drivers_imported_unnamed">가져온 드라이버</string>
+    <string name="driversexport_do">드라이버 내보내기</string>
+    <string name="driversexport_pick">설치된 모든 드라이버를 내보낼 폴더 선택</string>
+    <string name="driversexport_done">드라이버 %1$d개를 %2$s에 내보냈습니다</string>
+    <string name="driversexport_none">내보낼 드라이버가 없습니다</string>
+    <string name="driversexport_failed">내보내기 실패: %1$s</string>
     <string name="drivers_using_bundle">%1$s을(를) 런타임 및 디스플레이 드라이버로 사용 중.</string>
     <string name="drivers_using_bundle_restart">%1$s을(를) 런타임 및 디스플레이 드라이버로 사용 중. 디스플레이 드라이버는 DroidDeck을 다시 시작한 후 적용됩니다.</string>
     <string name="drivers_deleted_bundle">%1$s 삭제됨(드라이버 2개)</string>
@@ -2088,8 +2093,9 @@
     <string name="first_local_install">최초 로컬 일괄 설치</string>
     <string name="first_local_pick">FirstLocalInstall 폴더 선택</string>
     <string name="first_local_fonts">글꼴</string>
-    <string name="first_local_nothing_found">이 폴더에는 설치할 수 있는 파일이 없습니다: linuxfs.tar.zst, Proton .tar.zst, steam-client 폴더, desktop.tar.zst 또는 fonts 폴더가 필요합니다.</string>
-    <string name="first_local_all_installed">Linux 런타임, Proton, Steam 클라이언트, 데스크톱이 모두 설치되어 있습니다.</string>
+    <string name="first_local_nothing_found">이 폴더에는 설치할 수 있는 파일이 없습니다: linuxfs.tar.zst, Proton .tar.zst, steam-client 폴더, desktop.tar.zst, fonts 폴더 또는 내보낸 드라이버의 GPUDrivers 폴더가 필요합니다.</string>
+    <string name="first_local_all_installed">Linux 런타임, Proton, Steam 클라이언트, 데스크톱, GPU 드라이버가 모두 설치되어 있습니다.</string>
+    <string name="first_local_no_space">여유 공간이 부족합니다: 이 폴더를 설치하려면 약 %1$s이(가) 필요하지만 여유 공간은 %2$s뿐입니다.</string>
     <string name="first_local_done">%1$s 설치됨</string>
     <string name="first_local_failed">%1$s 실패: %2$s</string>
     <string name="setup_download_source">다운로드 소스</string>
@@ -2114,7 +2120,7 @@
     <string name="upd_fork_project">이 프로젝트의 GitHub:</string>
     <string name="upd_fork_ver_status">공식 빌드</string>
     <string name="upd_fork_ver_new">공식 빌드가 업데이트됨</string>
-    <string name="upd_fork_ver_headline">공식 %1$s</string>
+    <string name="upd_fork_ver_headline">공식 %1$s(%2$s)</string>
     <string name="upd_fork_ver_current">이 복사본은 %1$s 기반이며, 공식 빌드와 같은 버전입니다.</string>
     <string name="upd_fork_ver_behind">이 복사본은 %1$s 기반입니다. 공식 소스가 %2$s 로 진행되었습니다. 로컬 설치 기능을 따라가려면 이 포크를 업데이트하세요.</string>
     <string name="upd_fork_ver_unknown_headline">공식 버전을 읽지 못함</string>

@@ -232,8 +232,15 @@ fun ComponentsPage(
         when {
             gpuTab -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
                 GpuDriversPanel(gpu, gpuActions) { driverPage = it }
-                Row(modifier = Modifier.padding(top = 14.dp)) {
-                    SmallButton(stringResource(R.string.comp_import_zip), onClick = gpuActions.onImportZip)
+                // Import is one driver at a time; export is every installed driver at once, into a
+                // folder of the user's choosing - the way out of the app-private driver folders.
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 14.dp)) {
+                    SmallButton(stringResource(R.string.comp_import_zip), enabled = gpu.exporting == null, onClick = gpuActions.onImportZip)
+                    SecondaryButton(
+                        stringResource(R.string.driversexport_do), compact = true,
+                        enabled = gpu.busy == null && gpu.exporting == null, progress = gpu.exporting,
+                        onClick = gpuActions.onExportDrivers,
+                    )
                 }
             }
             snapshot == null -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {

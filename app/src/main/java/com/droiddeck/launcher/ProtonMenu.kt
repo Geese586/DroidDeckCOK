@@ -10,8 +10,8 @@ import com.droiddeck.launcher.ui.ProtonRow
 import com.droiddeck.launcher.session.SessionState
 
 /**
- * The optional ARM64 Protons (GE-Proton, proton-cachyos): the rows the page lists and an install or
- * removal in progress. The launcher screen keeps one and shows it.
+ * The optional ARM64 Protons (GE-Proton, proton-cachyos, DroidDeck-Proton): the rows the page lists
+ * and an install or removal in progress. The launcher screen keeps one and shows it.
  */
 internal class ProtonMenu(
     private val activity: android.app.Activity,
@@ -48,19 +48,16 @@ internal class ProtonMenu(
 
     /**
      * Installs a build from an archive the user picked, for a network that cannot reach GitHub at
-     * all. The release publishing a file of the same name is looked for first, so the archive is
-     * checked as the download of it would be; [askUnverified] takes over the ones that no release
-     * vouches for - a custom build, or a release list that cannot be reached at all.
+     * all, or for a build no repo the app knows about publishes. The release publishing a file of
+     * the same name is looked for first, so the archive is checked as the download of it would be;
+     * [askUnverified] takes over the rest - a custom build whose name says nothing, or a release
+     * list that cannot be reached at all. Nothing is refused outright any more: a name that does not
+     * look like the row's own build is a question, not a wall, since the tree unpacks to whatever
+     * the tarball calls itself either way.
      */
     fun installProtonFromFile(id: String, archive: java.io.File) {
         val tool = ProtonExtras.tools.firstOrNull { it.id == id } ?: return
         if (protonBusyId != null || SessionState.running) return
-        // The file name is also what says which build it is: the tree it unpacks to is named after
-        // the release, so a cachyos archive dropped on the GE row would land in the wrong place.
-        if (!tool.assetPattern.containsMatchIn(archive.name)) {
-            android.widget.Toast.makeText(activity, activity.getString(R.string.proton_local_wrong_build, tool.name), android.widget.Toast.LENGTH_LONG).show()
-            return
-        }
         protonBusyId = id
         protonStage = "Checking the release…"
         protonPercent = -1

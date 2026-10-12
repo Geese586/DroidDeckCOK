@@ -7,7 +7,7 @@
 
 # DroidDeckCOK · 中文本地一键安装版
 
-**DroidDeckCOK**（COK = **C**hinese **O**ne **K**ey）是本仓库的名字，指这份**在官方 DroidDeck 上加了「首次本地一键安装」**的中文本地化改造版。**改名只落在构建产物的文件名上**：包名、版本号、应用名与上游完全相同（见「[二、安装 APK](#二安装-apk)」）。
+**DroidDeckCOK**（COK = **C**hinese **O**ne **K**ey）是本仓库的名字，指这份**在官方 DroidDeck 上加了「首次本地一键安装」**的中文本地化改造版。**改名只落在构建产物的文件名上**：包名与应用名与上游完全相同，**版本号跟上游那一版走、只去掉开头的 `0.`**，本仓库自己的构建号另显示一行 `COK(...)`（见「[二、安装 APK](#二安装-apk)」）。
 
 DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve 的 Steam 客户端（Big Picture 大屏界面），Windows 游戏走 Valve 的 ARM64 Proton。
 
@@ -36,7 +36,7 @@ DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve �
 
 用本仓库构建出来的包是 `DroidDeckCOK-<版本>-release.apk`（`<版本>` 取自构建时的 `versionName`；包名 `com.droiddeck.launcher`）。
 
-文件名里的 `DroidDeckCOK` 只是本仓库给构建产物起的名字（COK 即 Chinese One Key）。**包名、版本号、应用名全部沿用上游，一个都没改**，所以装到设备上桌面图标仍然显示 `DroidDeck`，覆盖升级的行为也和以前一样。
+文件名里的 `DroidDeckCOK` 只是本仓库给构建产物起的名字（COK 即 Chinese One Key）。**包名与应用名全部沿用上游，一个都没改**；**版本号跟着上游那一版走、只去掉开头的 `0.`**（上游 `0.3.2` → 这里 `3.2`），所以官方一发 `0.3.3` 更新页就能判出更新，Android「应用信息」里显示的也是这个号；**本仓库自己的构建号不占版本号**，在它下面单独一行显示为 `COK(0.3.2.3)`（应用内设置 → 模式设置里 `DroidDeck` 那一行），更新页那行官方版本也带着它 —— 显示成 `官方 0.3.2(COK0.3.2.3)`。装到设备上桌面图标仍然显示 `DroidDeck`，覆盖升级的行为也和以前一样。
 
 装上、打开之后，先装好 Linux 运行环境（或直接用下节的本地一键安装），再按 **Play** 登录 Steam —— Steam 客户端会在首次启动时自行下载。
 

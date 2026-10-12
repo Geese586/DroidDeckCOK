@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.droiddeck.launcher.BuildConfig
 import com.droiddeck.launcher.R
 import com.droiddeck.launcher.update.AppUpdates
 
@@ -45,6 +46,24 @@ private const val RELEASES_URL = "https://github.com/Droid-Deck/DroidDeck/releas
  * that actually installs over this copy - same signer - is published.
  */
 private const val PROJECT_URL = "https://github.com/Geese586/DroidDeckCOK"
+
+/**
+ * The upstream release this copy was built from.
+ *
+ * The official catalog is compared against this rather than against the version the running APK
+ * reports ([AppUpdates.installed]): the two spell the same release differently. This fork names a
+ * build after the upstream release it carries, with the leading "0." dropped - upstream 0.3.2 is
+ * "3.2" in `app/build.gradle` - so the number Android's app info screen shows stays recognisable
+ * against the one DroidDeck publishes. That is what a version is for, and it is also why it cannot
+ * be compared across: an official "0.3.3" against this build's "3.2" is ahead on its first
+ * component, so the rail would never badge and the page would never have anything to say. Bumped
+ * by hand with each upstream merge, beside the versionName in `app/build.gradle`.
+ *
+ * This fork's own build count is not part of either number here: it lives in its own field
+ * (`FORK_VERSION`, printed by the settings dialog as "COK(0.3.2.3)" and here as "(COK0.3.2.3)")
+ * precisely so it can never be read as a version anything compares against.
+ */
+private const val UPSTREAM_BASE = "0.3.2"
 
 /**
  * The official build's newest stable release, when it is ahead of the version this copy was made
@@ -62,7 +81,7 @@ private const val PROJECT_URL = "https://github.com/Geese586/DroidDeckCOK"
 internal fun officialUpdateAvailable(catalog: AppUpdates.Catalog?): AppUpdates.Release? {
     val release = catalog?.stable ?: return null
     val version = release.version ?: release.tag
-    return if (AppUpdates.compareVersions(version, AppUpdates.installed().version) > 0) release else null
+    return if (AppUpdates.compareVersions(version, UPSTREAM_BASE) > 0) release else null
 }
 
 /**
@@ -101,6 +120,11 @@ internal fun UpdatesForkPage(s: FrontEndState, a: FrontEndActions, modifier: Mod
     val official = officialUpdateAvailable(u.catalog)
     val officialNow = u.catalog?.stable?.let { it.version ?: it.tag }
     val behindVersion = official?.let { it.version ?: it.tag }
+    // This fork's own build number, printed in brackets beside the official version: the number
+    // above says which upstream release this copy carries, the two together say which build of the
+    // fork it is - the same one the settings dialog shows (see MainActivity.buildStamp). Not a
+    // version anything compares against; see UPSTREAM_BASE.
+    val cokLabel = "COK" + BuildConfig.FORK_VERSION
     Column(modifier = modifier) {
         PageHeader(stringResource(R.string.upd_title)) {
             // The build that is running, beside the title where it is always in view.
@@ -151,8 +175,9 @@ internal fun UpdatesForkPage(s: FrontEndState, a: FrontEndActions, modifier: Mod
                     )
                 }
                 Text(
-                    if (officialNow != null) stringResource(R.string.upd_fork_ver_headline, officialNow)
-                    else stringResource(R.string.upd_fork_ver_unknown_headline),
+                    if (officialNow != null) stringResource(
+                        R.string.upd_fork_ver_headline, officialNow, cokLabel,
+                    ) else stringResource(R.string.upd_fork_ver_unknown_headline),
                     fontSize = 22.sp, fontWeight = FontWeight.Bold, color = colors.onBackground,
                     modifier = Modifier.padding(top = 4.dp),
                 )

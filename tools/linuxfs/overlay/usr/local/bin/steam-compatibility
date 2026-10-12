@@ -44,6 +44,10 @@ LIBRARY = "/mnt/droiddeck"  # the card library is LIBRARY + "-sd"; internal stor
 # Newest first: whichever the client has downloaded is used.
 SOURCES = ("Proton Experimental (ARM64)", "Proton 11.0 (ARM64)")
 OWN_TOOLS = ((TOOL, SOURCES), (TOOL_11, ("Proton 11.0 (ARM64)",)))
+# This fork's own Proton build - the one its Proton page and its offline folder install - as it is
+# unpacked into compatibilitytools.d ("DroidDeck-Proton 11-7.5"). A device nobody has picked a tool
+# for runs its games on it; see choose_default.
+PREFERRED_PREFIX = "droiddeck-proton"
 FEX_TOOL = "droiddeck-fex"
 FEX_LAUNCHER = "droiddeck-fex-tool"
 FEX_FILES = ("toolmanifest.vdf", "compatibilitytool.vdf", FEX_LAUNCHER)
@@ -935,6 +939,23 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def preferred_tool(catalog):
+    """This fork's own Proton, when the device has one installed - the tool a device nobody has
+    picked a tool for should run its games on.
+
+    None when it is not there, which leaves the caller's fallback (the Valve depot re-registered as
+    ours) in place, so a device without the fork's build is set up exactly as it was before. The
+    depot tools are skipped by their flag: both of their names start with the same stem.
+    """
+    for tool in catalog:
+        if tool["valve"]:
+            continue
+        stem = (tool["dir"] or tool["name"]).lower().replace(" ", "-")
+        if stem.startswith(PREFERRED_PREFIX):
+            return tool["name"]
+    return None
+
+
 def choose_default(steam_default, state, request, catalog, adopt_steam=True, apply_request=True, now=None):
     state = dict(state)
     names = [t["name"] for t in catalog]
@@ -951,8 +972,15 @@ def choose_default(steam_default, state, request, catalog, adopt_steam=True, app
                 request.get("name") or request.get("dir"), state.get("default") or TOOL))
     elif adopt_steam and steam_default in names and steam_default != state.get("default"):
         state.update(default=steam_default, seq=now or now_ms(), source="steam")
+    # A pick of the user's that is still installed stands, wherever it was made - this app's Proton
+    # page or the client's own menu, both of which record where the choice came from. Everything
+    # else - nobody has picked, or what they picked has been removed since - goes to this fork's own
+    # Proton when the device has it, and to the Valve depot re-registered as ours when it has not.
+    picked = state.get("source") in ("app", "steam") and state.get("default") in names
     if state.get("default") not in names:
         state["default"] = TOOL
+    if not picked:
+        state["default"] = preferred_tool(catalog) or state["default"]
     return state["default"], state
 
 

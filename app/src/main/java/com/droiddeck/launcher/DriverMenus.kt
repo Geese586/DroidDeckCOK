@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import com.droiddeck.launcher.gpu.DriverBundle
+import com.droiddeck.launcher.gpu.DriverExport
 import com.droiddeck.launcher.gpu.DriverPairs
 import com.droiddeck.launcher.gpu.GpuInfo
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
@@ -55,6 +56,8 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
     var autoStatus by mutableStateOf("")
     /** The bundle both drivers are set to, as "DD-Turnip 0.1.0", or null when they are not one. */
     var activeBundle by mutableStateOf<String?>(null)
+    /** 0..1 while every installed driver is being copied out, null when no export is running. */
+    var exporting by mutableStateOf<Float?>(null)
     private var autoCheckedThisProcess = false
 
     fun state() = GpuDriversState(
@@ -64,7 +67,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         autoStatus = autoStatus, releaseStatus = releaseStatus.ifEmpty { activity.getString(R.string.drivers_not_checked) }, checking = releaseChecking,
         linuxRows = linuxRows, linuxSelected = linuxSelected, androidRows = androidRows, androidSelected = androidSelected,
         linuxDownloads = linuxDownloads, androidDownloads = androidDownloads, canRestoreBundled = canRestoreBundled,
-        activeBundle = activeBundle,
+        activeBundle = activeBundle, exporting = exporting,
     )
     var androidRows by mutableStateOf<List<DriverRow>>(emptyList())
     var androidSelected by mutableStateOf("")
@@ -352,6 +355,35 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
             if (displayChanged && CompositorHost.isStarted) R.string.drivers_using_bundle_restart else R.string.drivers_using_bundle,
             bundle.label,
         )
+    }
+
+    /**
+     * Copy every installed driver into [folder], as zips this tab's own Import .zip takes back, plus
+     * a drivers.txt saying what each one is. Off the main thread - the display drivers are tens of
+     * MB together - with the buttons showing the percent; the last line is a toast.
+     */
+    fun exportTo(folder: File) {
+        if (exporting != null) return
+        exporting = 0f
+        Thread({
+            val result = runCatching {
+                DriverExport.export(activity, folder) { percent -> ui.post { exporting = percent / 100f } }
+            }
+            ui.post {
+                exporting = null
+                result.onSuccess { done ->
+                    val text = if (done.drivers > 0) activity.getString(R.string.driversexport_done, done.drivers, folder.name)
+                        else activity.getString(R.string.driversexport_none)
+                    android.widget.Toast.makeText(activity, text, android.widget.Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    Log.w(TAG, "driver export", e)
+                    android.widget.Toast.makeText(
+                        activity, activity.getString(R.string.driversexport_failed, e.message ?: e.javaClass.simpleName),
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }, "driver-export").start()
     }
 
     /**

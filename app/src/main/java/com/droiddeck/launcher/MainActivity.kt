@@ -164,6 +164,8 @@ class MainActivity : ComponentActivity() {
     private var saveBusy: String? = null
     /** What to do with the zip or folder the file picker hands back after a game page's Manage saves. */
     private var onSavePicked: ((File) -> Unit)? = null
+    /** A driver export waiting for the storage permission, to open its folder picker once answered. */
+    private var exportAfterPermission = false
     private var controllerSettings by mutableStateOf<ControllerPrefs.Settings?>(null)
     private var catalog by mutableStateOf<List<DesktopCatalog.Entry>?>(null)
     private var catalogLoading by mutableStateOf(false)
@@ -247,6 +249,9 @@ class MainActivity : ComponentActivity() {
     private val pickAnyDriver = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedUri(r.data)?.let { drivers.importDriver(it, linux = null) }
     }
+    private val pickExportDriversDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { drivers.exportTo(it) }
+    }
     private val pickLossless = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { importLossless(it) }
     }
@@ -275,6 +280,31 @@ class MainActivity : ComponentActivity() {
     private val pickSaveDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         val then = onSavePicked.also { onSavePicked = null } ?: return@registerForActivityResult
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let(then)
+    }
+
+    /**
+     * Copy every installed GPU driver into a folder the user picks. The write goes to shared
+     * storage, which on this targetSdk still needs the old permission: ask for it first, then open
+     * the folder picker - a refusal is not asked again, the write itself says what went wrong.
+     */
+    private fun exportDrivers() {
+        if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            exportAfterPermission = true
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), EXPORT_PERMISSION)
+            return
+        }
+        pickExportDriversDir.launch(InAppFilePicker.buildDirIntent(
+            this, getString(R.string.driversexport_pick),
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).path,
+        ))
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == EXPORT_PERMISSION && exportAfterPermission) {
+            exportAfterPermission = false
+            exportDrivers()
+        }
     }
 
     private fun refreshWifiDiscovery() {
@@ -385,10 +415,17 @@ class MainActivity : ComponentActivity() {
     private var forceSsbs by mutableStateOf(false)
     private var steamChannel by mutableStateOf("steamdeck_publicbeta")
     /**
-     * Which copy of the app this is: the version, and when the APK that is running was written.
-     * Every build of this fork keeps the same version on purpose (00Design/custom-changes), so it
-     * is that time - not the version - that tells two builds apart. Shown in the mode settings so
-     * a device's build can be named from the device itself.
+     * Which copy of the app this is: the version, when the APK that is running was written, and
+     * this fork's own build number, on a line of its own.
+     *
+     * Two lines rather than one because neither number names a build on its own. The package
+     * version follows the upstream release this copy carries (0.3.2 -> "3.2"), which is what keeps
+     * it comparable with an official release, and it therefore cannot also count this fork's own
+     * builds - every build carrying the same upstream release reports the same version, and the
+     * versionCode stays 12 throughout. So the moment the APK was written separates two builds of
+     * it, and the "COK(...)" line is the number this checkout publishes that build under
+     * ([BuildConfig.FORK_VERSION]). Shown in the mode settings so a device's build can be named
+     * from the device itself.
      */
     private val buildStamp: String by lazy {
         val parts = mutableListOf<String>()
@@ -401,7 +438,11 @@ class MainActivity : ComponentActivity() {
                 .format(java.util.Date(File(applicationInfo.sourceDir).lastModified()))
         } catch (e: Exception) {
         }
-        parts.joinToString(" - ")
+        // The fork's own line, never merged into the version above: it is not part of the package
+        // version and must not be read as if it were.
+        val cok = "COK(" + BuildConfig.FORK_VERSION + ")"
+        val build = parts.joinToString(" - ")
+        if (build.isEmpty()) cok else build + "\n" + cok
     }
     private var runSteamAtStartup by mutableStateOf(false)
     private var theme by mutableStateOf("graphite")
@@ -1245,6 +1286,7 @@ class MainActivity : ComponentActivity() {
                 onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, getString(R.string.drivers_pick_linux))) },
                 onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, getString(R.string.drivers_pick_android))) },
                 onImportZip = { pickAnyDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, getString(R.string.drivers_pick_any))) },
+                onExportDrivers = { exportDrivers() },
                 onRestoreBundled = { TurnipDriver(this).restoreBundled(); drivers.refreshDrivers() },
             ),
         )
@@ -1908,6 +1950,13 @@ class MainActivity : ComponentActivity() {
      * that was never in doubt. Each part goes in unvouched for, which is what filling the folder by
      * hand already decided, and nothing is asked of the user either.
      *
+     * What is checked is the room it needs, and it is the one thing here that can say no: the folder
+     * being carried is several gigabytes of archives, and what they unpack to is what sits on the
+     * volume. A run that starts short of that ends part-way through with a device that is neither
+     * set up nor untouched, so the figure is worked out from the folder and compared with the free
+     * space first, and a short answer names both rather than starting. It is an estimate - each
+     * archive is counted at about three times its size - and it errs upward, deliberately.
+     *
      * Reading the folder is a listing, so this takes no time; it runs off the main thread for that
      * listing rather than for a wait, and holding the screen busy keeps a second pick from starting
      * over the first.
@@ -1925,6 +1974,10 @@ class MainActivity : ComponentActivity() {
             // keeping it would move the button's judgement off a folder that works.
             if (held.isNotEmpty()) FirstLocalInstall.remember(this, folder)
             val missing = FirstLocalInstall.missing(this, held)
+            // The volume the install lands on is the one under this app's own files; a runtime not
+            // installed yet has no directory of its own to measure.
+            val need = FirstLocalInstall.spaceNeeded(missing)
+            val free = android.os.StatFs(filesDir.path).availableBytes
             // Settled here rather than in the post below: it lists the folder again, and this is the
             // point where the "everything in it is already in" answer takes the button away - which
             // is what tapping it to find nothing left to do is supposed to do.
@@ -1937,6 +1990,15 @@ class MainActivity : ComponentActivity() {
                 when {
                     held.isEmpty() -> android.widget.Toast.makeText(this, R.string.first_local_nothing_found, android.widget.Toast.LENGTH_LONG).show()
                     missing.isEmpty() -> android.widget.Toast.makeText(this, R.string.first_local_all_installed, android.widget.Toast.LENGTH_LONG).show()
+                    free < need -> android.widget.Toast.makeText(
+                        this,
+                        getString(
+                            R.string.first_local_no_space,
+                            com.droiddeck.launcher.core.FileUtils.sizeToString(need),
+                            com.droiddeck.launcher.core.FileUtils.sizeToString(free),
+                        ),
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
                     // Straight in: the files were chosen by putting them in the folder, so there is
                     // nothing left to ask about any of them.
                     else -> runFirstLocalInstall(missing)
@@ -1991,6 +2053,8 @@ class MainActivity : ComponentActivity() {
         FirstLocalInstall.Part.DESKTOP -> getString(R.string.content_linux_desktop)
         FirstLocalInstall.Part.FONTS -> getString(R.string.first_local_fonts)
         FirstLocalInstall.Part.EXTRAS -> found.tool?.name ?: found.source.name
+        // The whole folder, however many drivers are in it: the step is the folder.
+        FirstLocalInstall.Part.GPU -> getString(R.string.mode_gpu_drivers)
     }
 
     /**
@@ -2038,5 +2102,7 @@ class MainActivity : ComponentActivity() {
         /** What the picker offers for a driver zip; some file apps label a zip as a plain stream. */
         private val ZIP_EXT = listOf("zip")
         private val WCP_EXT = listOf("wcp")
+        /** The storage prompt a driver export puts up before its folder picker. */
+        private const val EXPORT_PERMISSION = 3
     }
 }

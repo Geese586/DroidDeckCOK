@@ -80,7 +80,21 @@ android {
         // proot, gamescope, the Steam client and everything it launches all live under files/.
         targetSdkVersion 28
         versionCode 12
-        versionName "0.3.2"
+        // The upstream release this copy carries, without its leading "0.": upstream 0.3.2 is
+        // "3.2" here. It is deliberately kept comparable with upstream's own numbering, because
+        // this is the number Android's app info screen shows and the one anything else that reads
+        // a package version will see. A fork-only sequence cannot live here: "3.2.3" against an
+        // official "0.3.3" is ahead on its first component, so the update page would read every
+        // release DroidDeck makes as older than this build (see ui/UpdatesForkPage.kt).
+        versionName "3.2"
+        // This fork's own build number: the upstream release above, spelled in full, plus this
+        // checkout's own count - "0.3.2.3" is the third build of the fork on upstream 0.3.2. The
+        // settings dialog prints it under the version as "COK(0.3.2.3)", and the updates page
+        // prints it beside the official version as "(COK0.3.2.3)", so a device's build can still be
+        // named from the device itself. Kept out of the line above on purpose, and bumped by hand
+        // with each build handed over; the packaging script names the APK in dist/ after the line
+        // above, not after this.
+        buildConfigField "String", "FORK_VERSION", "\"0.3.2.3\""
         buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
         buildConfigField "String", "SOURCE_COMMIT", "\"${sourceCommit}\""
         buildConfigField "int", "PR_NUMBER", "${prNumber}"

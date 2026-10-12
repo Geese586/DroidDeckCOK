@@ -1208,6 +1208,11 @@
     <string name="drivers_not_a_driver">不是驱动 zip 包：既不是 AdrenoTools 驱动，也不是 -Linux Turnip 或 Android + Linux 组合包</string>
     <string name="drivers_import_failed">导入失败：%1$s</string>
     <string name="drivers_imported_unnamed">已导入的驱动</string>
+    <string name="driversexport_do">导出驱动</string>
+    <string name="driversexport_pick">选择要把所有已安装驱动导出到的文件夹</string>
+    <string name="driversexport_done">已导出 %1$d 个驱动到 %2$s</string>
+    <string name="driversexport_none">没有可导出的驱动</string>
+    <string name="driversexport_failed">导出失败：%1$s</string>
     <string name="drivers_using_bundle">正在将 %1$s 同时用作运行时驱动和显示驱动。</string>
     <string name="drivers_using_bundle_restart">正在将 %1$s 同时用作运行时驱动和显示驱动。显示驱动将在 DroidDeck 重启后生效。</string>
     <string name="drivers_deleted_bundle">已删除 %1$s（两个驱动）</string>
@@ -2088,8 +2093,9 @@
     <string name="first_local_install">首次本地一键安装</string>
     <string name="first_local_pick">选择 FirstLocalInstall 文件夹</string>
     <string name="first_local_fonts">字体</string>
-    <string name="first_local_nothing_found">这个文件夹里没有可以安装的文件：需要 linuxfs.tar.zst、Proton 的 .tar.zst、steam-client 文件夹、desktop.tar.zst 或 fonts 文件夹。</string>
-    <string name="first_local_all_installed">运行环境、Proton、Steam 客户端与桌面都已安装，不需要再装。</string>
+    <string name="first_local_nothing_found">这个文件夹里没有可以安装的文件：需要 linuxfs.tar.zst、Proton 的 .tar.zst、steam-client 文件夹、desktop.tar.zst、fonts 文件夹，或导出驱动的 GPUDrivers 文件夹。</string>
+    <string name="first_local_all_installed">运行环境、Proton、Steam 客户端、桌面与 GPU 驱动都已安装，不需要再装。</string>
+    <string name="first_local_no_space">可用空间不足：安装这个文件夹大约需要 %1$s，当前只有 %2$s 可用。</string>
     <string name="first_local_done">%1$s 已安装</string>
     <string name="first_local_failed">%1$s 安装失败：%2$s</string>
     <string name="setup_download_source">下载源</string>
@@ -2114,7 +2120,7 @@
     <string name="upd_fork_project">本项目的 GitHub：</string>
     <string name="upd_fork_ver_status">官方版本</string>
     <string name="upd_fork_ver_new">官方已更新</string>
-    <string name="upd_fork_ver_headline">官方 %1$s</string>
+    <string name="upd_fork_ver_headline">官方 %1$s(%2$s)</string>
     <string name="upd_fork_ver_current">本包基于 %1$s 构建，与官方当前版本相同。</string>
     <string name="upd_fork_ver_behind">本包基于 %1$s 构建，官方源码已更新到 %2$s —— 请合并官方新代码，让本地安装功能跟上。</string>
     <string name="upd_fork_ver_unknown_headline">尚未读到官方版本</string>

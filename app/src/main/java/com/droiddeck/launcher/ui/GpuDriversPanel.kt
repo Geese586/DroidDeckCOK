@@ -97,6 +97,8 @@ class GpuDriversState(
     val canRestoreBundled: Boolean = false,
     /** The Android + Linux bundle both drivers are set to ("DD-Turnip 0.1.0"), or null. */
     val activeBundle: String? = null,
+    /** 0..1 while every installed driver is being copied out to a folder, null when not. */
+    val exporting: Float? = null,
 ) {
     /** The pair both drivers are set to, if they make one. */
     val activePair: PairRow? get() = pairs.firstOrNull { it.active }
@@ -115,6 +117,8 @@ class GpuDriversActions(
     val onImportAndroid: () -> Unit = {},
     /** The tab's own import: a bundle, or a single driver of either kind. */
     val onImportZip: () -> Unit = {},
+    /** Copy every installed driver into a folder the user picks. */
+    val onExportDrivers: () -> Unit = {},
     val onRestoreBundled: () -> Unit = {},
 )
 

@@ -1208,6 +1208,11 @@
     <string name="drivers_not_a_driver">ドライバーzipではありません：AdrenoToolsドライバー、-Linux Turnip、Android + Linuxバンドルのいずれでもありません</string>
     <string name="drivers_import_failed">インポートに失敗しました：%1$s</string>
     <string name="drivers_imported_unnamed">インポートしたドライバー</string>
+    <string name="driversexport_do">ドライバーをエクスポート</string>
+    <string name="driversexport_pick">インストール済みのドライバーをすべて書き出すフォルダーを選択</string>
+    <string name="driversexport_done">%1$d 個のドライバーを %2$s にエクスポートしました</string>
+    <string name="driversexport_none">エクスポートするドライバーがありません</string>
+    <string name="driversexport_failed">エクスポートに失敗しました：%1$s</string>
     <string name="drivers_using_bundle">%1$sをランタイムドライバーとディスプレイドライバーの両方として使用中。</string>
     <string name="drivers_using_bundle_restart">%1$sをランタイムドライバーとディスプレイドライバーの両方として使用中。ディスプレイドライバーはDroidDeckの再起動後に有効になります。</string>
     <string name="drivers_deleted_bundle">%1$sを削除しました（両方のドライバー）</string>
@@ -2088,8 +2093,9 @@
     <string name="first_local_install">初回ローカル一括インストール</string>
     <string name="first_local_pick">FirstLocalInstall フォルダーを選択</string>
     <string name="first_local_fonts">フォント</string>
-    <string name="first_local_nothing_found">このフォルダーにはインストールできるファイルがありません：linuxfs.tar.zst、Proton の .tar.zst、steam-client フォルダー、desktop.tar.zst、または fonts フォルダーが必要です。</string>
-    <string name="first_local_all_installed">Linux実行環境・Proton・Steamクライアント・デスクトップはすべてインストール済みです。</string>
+    <string name="first_local_nothing_found">このフォルダーにはインストールできるファイルがありません：linuxfs.tar.zst、Proton の .tar.zst、steam-client フォルダー、desktop.tar.zst、fonts フォルダー、またはエクスポートしたドライバーの GPUDrivers フォルダーが必要です。</string>
+    <string name="first_local_all_installed">Linux実行環境・Proton・Steamクライアント・デスクトップ・GPUドライバーはすべてインストール済みです。</string>
+    <string name="first_local_no_space">空き容量が足りません：このフォルダーのインストールには約 %1$s 必要ですが、空きは %2$s だけです。</string>
     <string name="first_local_done">%1$s をインストールしました</string>
     <string name="first_local_failed">%1$s に失敗：%2$s</string>
     <string name="setup_download_source">ダウンロード元</string>
@@ -2114,7 +2120,7 @@
     <string name="upd_fork_project">このプロジェクトの GitHub：</string>
     <string name="upd_fork_ver_status">公式ビルド</string>
     <string name="upd_fork_ver_new">公式ビルドが更新されました</string>
-    <string name="upd_fork_ver_headline">公式 %1$s</string>
+    <string name="upd_fork_ver_headline">公式 %1$s(%2$s)</string>
     <string name="upd_fork_ver_current">このコピーは %1$s を基にしており、公式ビルドと同じバージョンです。</string>
     <string name="upd_fork_ver_behind">このコピーは %1$s を基にしています。公式のソースは %2$s に進みました。ローカルインストール機能を追随させるには、このフォークを更新してください。</string>
     <string name="upd_fork_ver_unknown_headline">公式バージョンを取得できていません</string>

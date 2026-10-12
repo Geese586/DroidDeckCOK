@@ -1200,6 +1200,11 @@
     <string name="drivers_not_a_driver">Not a driver zip: neither an AdrenoTools driver, a -Linux Turnip nor an Android + Linux bundle</string>
     <string name="drivers_import_failed">Import failed: %1$s</string>
     <string name="drivers_imported_unnamed">Imported driver</string>
+    <string name="driversexport_do">Export drivers</string>
+    <string name="driversexport_pick">Choose the folder to export every installed driver into</string>
+    <string name="driversexport_done">%1$d drivers exported to %2$s</string>
+    <string name="driversexport_none">No drivers to export</string>
+    <string name="driversexport_failed">Export failed: %1$s</string>
     <string name="drivers_using_bundle">Using %1$s as both the runtime and display driver.</string>
     <string name="drivers_using_bundle_restart">Using %1$s as both the runtime and display driver. The display driver applies after DroidDeck restarts.</string>
     <string name="drivers_deleted_bundle">Deleted %1$s (both drivers)</string>
@@ -1983,8 +1988,10 @@
     <string name="first_local_install">First-time local install</string>
     <string name="first_local_pick">Choose the FirstLocalInstall folder</string>
     <string name="first_local_fonts">Fonts</string>
-    <string name="first_local_nothing_found">That folder holds nothing this can install: a linuxfs.tar.zst, a Proton .tar.zst, a steam-client folder, a desktop.tar.zst or a fonts folder.</string>
-    <string name="first_local_all_installed">The runtime, Proton, the Steam client and the desktop are all in already.</string>
+    <string name="first_local_nothing_found">That folder holds nothing this can install: a linuxfs.tar.zst, a Proton .tar.zst, a steam-client folder, a desktop.tar.zst, a fonts folder, or a GPUDrivers folder of exported drivers.</string>
+    <string name="first_local_all_installed">The runtime, Proton, the Steam client, the desktop and the GPU drivers are all in already.</string>
+    <!-- The local install refusing to start for want of room; %1$s is what it needs, %2$s what is free -->
+    <string name="first_local_no_space">Not enough free space: installing this folder needs about %1$s, and only %2$s is free.</string>
     <string name="first_local_done">%1$s installed</string>
     <string name="first_local_failed">%1$s failed: %2$s</string>
     <string name="setup_download_source">Download source</string>
@@ -2009,7 +2016,7 @@
     <string name="upd_fork_project">This project\'s GitHub:</string>
     <string name="upd_fork_ver_status">Official build</string>
     <string name="upd_fork_ver_new">Official build updated</string>
-    <string name="upd_fork_ver_headline">Official %1$s</string>
+    <string name="upd_fork_ver_headline">Official %1$s(%2$s)</string>
     <string name="upd_fork_ver_current">This copy is built on %1$s, the same version the official build is on.</string>
     <string name="upd_fork_ver_behind">This copy is built on %1$s. The official sources have moved on to %2$s - update this fork to keep the local-install features current.</string>
     <string name="upd_fork_ver_unknown_headline">Official version not read</string>

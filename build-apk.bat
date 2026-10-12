@@ -465,7 +465,9 @@ if "%OWN_KEY%"=="1" (
 )
 
 set "APPVER="
-for /f "tokens=2" %%a in ('findstr /r /c:"versionName" "%ROOT%\app\build.gradle" 2^>nul') do set "APPVER=%%~a"
+rem  Only the declaration counts: the first token has to be the field's own name, so a comment
+rem  that happens to mention it can never end up naming the APK in dist\.
+for /f "tokens=1,2" %%a in ('findstr /r /c:"versionName" "%ROOT%\app\build.gradle" 2^>nul') do if "%%~a"=="versionName" set "APPVER=%%~b"
 if not defined APPVER set "APPVER=0.0.0"
 
 set "DIST=%ROOT%\dist"
