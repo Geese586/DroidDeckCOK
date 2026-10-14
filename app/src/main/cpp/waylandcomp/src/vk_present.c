@@ -160,6 +160,11 @@ static const char *vk_result_name(VkResult r);
 static pthread_mutex_t g_req_lock = PTHREAD_MUTEX_INITIALIZER;
 static ANativeWindow *g_req_window;
 static int g_req_pending;
+/* A detach was asked for since the compositor thread last looked. A rebind (null, then the same
+ * window) to rebuild the swapchain at a new size can land in full before the thread gets to it,
+ * and would otherwise read as the same window handed over again - nothing rebuilt, and the old
+ * size's buffers scaled onto the rotated or refolded panel. */
+static int g_req_detached;
 
 /* Scale mode + alignment (app values, see vk_present.h); written from any thread, read per frame. */
 static volatile int g_mode = VKP_MODE_STRETCH, g_align = VKP_ALIGN_CENTER;
@@ -252,6 +257,7 @@ void vk_present_set_window(ANativeWindow *window) {
     if (g_req_pending && g_req_window && g_req_window != window) superseded = g_req_window;
     g_req_window = window;
     g_req_pending = 1;
+    if (!window) g_req_detached = 1;
     pthread_mutex_unlock(&g_req_lock);
     if (superseded) ANativeWindow_release(superseded);
 }
@@ -261,13 +267,20 @@ int vkp_apply_window_request(void) {
     pthread_mutex_lock(&g_req_lock);
     if (!g_req_pending) { pthread_mutex_unlock(&g_req_lock); return 0; }
     w = g_req_window;
+    const int detached = g_req_detached;
     g_req_window = NULL;
     g_req_pending = 0;
+    g_req_detached = 0;
     pthread_mutex_unlock(&g_req_lock);
     if (w == g_window) {
         /* The same window handed over again (ANativeWindow_fromSurface adds a reference each time). */
         if (w) ANativeWindow_release(w);
-        return 0;
+        if (!w || !detached) return 0;
+        /* ... after a detach: a rebind for a resized surface. Rebuilt at its size on the next frame. */
+        sc_layer_window_gone();
+        destroy_swapchain();
+        droiddeck_log("gpu", "screen surface rebound: rebuilding the swapchain at its new size");
+        return 1;
     }
     sc_layer_window_gone();  /* the layer (if any) belongs to the old window */
     destroy_swapchain(); /* recreated against the new window on the next frame */
@@ -1151,6 +1164,7 @@ static void record_draw(VkCommandBuffer cmd, const struct vkp_draw *d, const VkI
 }
 
 static void destroy_scene_image(void) {
+    if (g_scene.img) vkp_effects_forget_image(g_scene.img);
     if (g_scene.img) hdrc_forget_image(g_scene.img); /* the HDR pass may have drawn into it */
     if (g_scene.img) blendp_forget_image(g_scene.img);
     if (g_scene.img) g_vk.DestroyImage(g_dev, g_scene.img, NULL);
@@ -1190,6 +1204,7 @@ static int ensure_scene_image(int w, int h) {
 static int ensure_img(struct vkp_img_slot *s, int w, int h, VkFormat fmt, VkImageUsageFlags usage, const char *what) {
     if (s->img && s->w == w && s->h == h && s->fmt == fmt) return 0;
     if (s->img) hdrc_forget_image(s->img);
+    if (s->img) vkp_effects_forget_image(s->img);
     if (s->img) blendp_forget_image(s->img);
     if (s->img) g_vk.DestroyImage(g_dev, s->img, NULL);
     if (s->mem) g_vk.FreeMemory(g_dev, s->mem, NULL);
@@ -1516,6 +1531,7 @@ static int render_impl(int scene_w, int scene_h, const struct vkp_draw *draws, i
                        const struct vkp_hdr_frame *hf, int *how) {
     if (how) *how = 0;
     vkp_apply_window_request();
+    check_surface_changed(); /* a rotation or a fold the rebind did not cover: rebuild at the new size */
     if (g_dev_state == -2) return -1;
     if (dev_init() != 0 || !g_window || scene_w <= 0 || scene_h <= 0) return -1;
 
@@ -2099,6 +2115,7 @@ static int pass_begin_impl(int scene_w, int scene_h, const struct vkp_draw *draw
                            const struct vkp_hdr_frame *hf, int *rw, int *rh) {
     if (g_pass.active) vkp_pass_abort();
     if (g_dev_state == -2 || dev_init() != 0 || !g_window || scene_w <= 0 || scene_h <= 0) return -1;
+    check_surface_changed(); /* as in render_impl: the effects pass maps onto the output's size */
     if (!g_swapchain && swap_init() != 0) return -1; /* the mapping is in output pixels */
     update_map(scene_w, scene_h);
     if (!g_map.valid) return -1;

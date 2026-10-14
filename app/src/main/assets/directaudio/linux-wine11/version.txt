@@ -1,4 +1,5 @@
 directaudio linux-wine11 relay build
-source 3548a4a730e8d01cb0cb0268d51a2fb8f23dcd33
+abi wine11
+source 52aedbf8ddd42874a5bbd21df20e1046367f442e
 wine ValveSoftware/wine@proton_11.0
 unixlib.h sha256 fdbed263338d0719c4d12e02b045c23721de33219ec8878e4c2d7ebc9efcbe09

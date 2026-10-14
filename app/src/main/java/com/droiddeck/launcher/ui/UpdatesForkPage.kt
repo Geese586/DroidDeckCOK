@@ -52,18 +52,18 @@ private const val PROJECT_URL = "https://github.com/Geese586/DroidDeckCOK"
  *
  * The official catalog is compared against this rather than against the version the running APK
  * reports ([AppUpdates.installed]): the two spell the same release differently. This fork names a
- * build after the upstream release it carries, with the leading "0." dropped - upstream 0.3.2 is
- * "3.2" in `app/build.gradle` - so the number Android's app info screen shows stays recognisable
+ * build after the upstream release it carries, with the leading "0." dropped - upstream 0.4.0 is
+ * "4.0" in `app/build.gradle` - so the number Android's app info screen shows stays recognisable
  * against the one DroidDeck publishes. That is what a version is for, and it is also why it cannot
- * be compared across: an official "0.3.3" against this build's "3.2" is ahead on its first
+ * be compared across: an official "0.4.1" against this build's "4.0" is ahead on its first
  * component, so the rail would never badge and the page would never have anything to say. Bumped
  * by hand with each upstream merge, beside the versionName in `app/build.gradle`.
  *
  * This fork's own build count is not part of either number here: it lives in its own field
- * (`FORK_VERSION`, printed by the settings dialog as "COK(0.3.2.3)" and here as "(COK0.3.2.3)")
+ * (`FORK_VERSION`, printed by the settings dialog as "COK(0.4.0)" and here as "(COK0.4.0)")
  * precisely so it can never be read as a version anything compares against.
  */
-private const val UPSTREAM_BASE = "0.3.2"
+private const val UPSTREAM_BASE = "0.4.0"
 
 /**
  * The official build's newest stable release, when it is ahead of the version this copy was made

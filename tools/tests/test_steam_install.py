@@ -73,8 +73,7 @@ fi
         self.env = dict(os.environ, HOME=str(self.home), XDG_DATA_HOME=str(self.data),
                         PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         TEST_CDN=str(self.cdn), TEST_REQUESTS=str(self.requests))
-        self.env.pop('BL_STEAM_CHANNEL', None)
-        for channel in ('publicbeta', 'steamdeck_publicbeta'):
+        for channel in ('steamdeck_publicbeta',):
             archive = self.cdn / (channel + '.zip')
             with zipfile.ZipFile(archive, 'w') as package:
                 package.writestr('steamrtarm64/steam', channel)
@@ -132,8 +131,8 @@ fi
         lines.append('}')
         (folder / 'steam_client_steamdeck_publicbeta_linuxarm64').write_text('\n'.join(lines) + '\n')
 
-    def assert_installed(self, channel):
-        result = self.install(channel)
+    def assert_installed(self, channel='steamdeck_publicbeta'):
+        result = self.install()
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(channel + '\n', (self.steam / 'package/beta').read_text())
         self.assertEqual('123456\n', (self.steam / 'package/droiddeck-installed').read_text())
@@ -150,38 +149,31 @@ fi
             'https://client-update.fastly.steamstatic.com/' + channel + '.zip',
         ], self.requests.read_text().splitlines())
 
-    def test_unset_channel_downloads_deck_beta(self):
+    def test_downloads_the_deck_beta_client(self):
+        self.assert_installed()
+
+    def test_an_install_from_another_branch_is_left_for_steam_to_move(self):
+        # An older app could install publicbeta; droiddeck-session moves the client at its start.
+        self.assert_installed()
+        requests = self.requests.read_text()
+        (self.steam / 'package/beta').write_text('publicbeta\n')
         result = self.install()
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual('steamdeck_publicbeta\n', (self.steam / 'package/beta').read_text())
-        self.assertIn('/steam_client_steamdeck_publicbeta_linuxarm64\n', self.requests.read_text())
-
-    def test_explicit_deck_beta_downloads_matching_client(self):
-        self.assert_installed('steamdeck_publicbeta')
-
-    def test_explicit_public_beta_downloads_matching_client(self):
-        self.assert_installed('publicbeta')
-
-    def test_existing_install_is_left_for_steam_to_update(self):
-        self.assert_installed('steamdeck_publicbeta')
-        requests = self.requests.read_text()
-        result = self.install('publicbeta')
-        self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(requests, self.requests.read_text())
-        self.assertEqual('steamdeck_publicbeta\n', (self.steam / 'package/beta').read_text())
-
-    def test_failed_download_has_no_ready_marker_and_can_retry(self):
-        archive = self.cdn / 'publicbeta.zip'
-        original = archive.read_bytes()
-        archive.write_bytes(b'corrupt download')
-        self.assertNotEqual(0, self.install('publicbeta').returncode)
-        self.assertFalse((self.steam / 'package/droiddeck-installed').exists())
-        archive.write_bytes(original)
-        self.assertEqual(0, self.install('publicbeta').returncode)
         self.assertEqual('publicbeta\n', (self.steam / 'package/beta').read_text())
 
+    def test_failed_download_has_no_ready_marker_and_can_retry(self):
+        archive = self.cdn / 'steamdeck_publicbeta.zip'
+        original = archive.read_bytes()
+        archive.write_bytes(b'corrupt download')
+        self.assertNotEqual(0, self.install().returncode)
+        self.assertFalse((self.steam / 'package/droiddeck-installed').exists())
+        archive.write_bytes(original)
+        self.assertEqual(0, self.install().returncode)
+        self.assertEqual('steamdeck_publicbeta\n', (self.steam / 'package/beta').read_text())
+
     def break_client(self, starts):
-        self.assert_installed('steamdeck_publicbeta')
+        self.assert_installed()
         self.requests.unlink()
         package = self.steam / 'package'
         (self.steam / 'steamrtarm64/steam').write_text('half updated')
@@ -197,7 +189,7 @@ fi
 
     def test_two_starts_with_nothing_shown_fetch_the_client_again(self):
         package = self.break_client(2)
-        self.assert_installed('steamdeck_publicbeta')
+        self.assert_installed()
         self.assertEqual('repaired\n', (package / 'droiddeck-unconfirmed').read_text())
         self.assertFalse((self.steam / '.crash').exists())
         # The repair takes the client's own records with the stamp - they describe the build it is
@@ -236,7 +228,7 @@ fi
         self.assertFalse((package / 'droiddeck-installed').exists())
         archive.write_bytes(original)
         self.requests.unlink()
-        self.assert_installed('steamdeck_publicbeta')
+        self.assert_installed()
         self.assertFalse(request.exists())
         self.requests.unlink()
         self.assertEqual(0, self.install().returncode)

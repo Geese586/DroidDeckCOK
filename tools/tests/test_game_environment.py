@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -51,6 +52,72 @@ class GameEnvironmentTest(unittest.TestCase):
         self.assertEqual(MODULE["apply_config"](env, config, "42"), {"KEEP": "inherited", "CUSTOM": "game", "EMPTY": ""})
         self.assertEqual(env["REMOVE"], "inherited")
         self.assertEqual(MODULE["apply_config"](env, config, "43")["CUSTOM"], "shared")
+
+    def test_component_profiles_override_general_and_restore_it_for_the_next_game(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            component_dir = home / ".local/share/droiddeck-components"
+            base = root / "proton"
+            target = base / "files/lib/wine/dxvk/aarch64-windows/d3d11.dll"
+            leftover = target.with_name("d3d8.dll")
+            component_dir.mkdir(parents=True)
+            target.parent.mkdir(parents=True)
+            (base / "version").write_text("1 build-1\n")
+            general = root / "general.dll"
+            game = root / "game.dll"
+            general.write_text("general")
+            game.write_text("game")
+            target.write_text("old")
+            leftover.write_text("old")
+            digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            (component_dir / "desired.tsv").write_text(
+                "*\tproton\tbuild-1\tdxvk\tfiles/lib/wine/dxvk/aarch64-windows/d3d11.dll\t%s\t%s\n"
+                "42\tproton\tbuild-1\tdxvk\tfiles/lib/wine/dxvk/aarch64-windows/d3d11.dll\t%s\t%s\n"
+                "42\tproton\tbuild-1\tdxvk\tfiles/lib/wine/dxvk/aarch64-windows/d3d8.dll\t-\t-\n"
+                % (digest(general), general, digest(game), game)
+            )
+            script = COMPAT["BL_COMPONENTS_SETUP"] + '\nverb=waitforexitandrun; bl_components "$1"\n'
+            env = dict(os.environ, HOME=str(home), STEAM_COMPAT_DATA_PATH="/steam/compatdata/42")
+            subprocess.run(["bash", "-c", script, "test", str(base)], env=env, check=True)
+            self.assertEqual(target.read_text(), "game")
+            self.assertFalse(leftover.exists())
+
+            env["STEAM_COMPAT_DATA_PATH"] = "/steam/compatdata/43"
+            subprocess.run(["bash", "-c", script, "test", str(base)], env=env, check=True)
+            self.assertEqual(target.read_text(), "general")
+
+    def test_component_scope_matches_environment_scope_for_shortcut_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            component_dir = root / ".local/share/droiddeck-components"
+            base = root / "proton"
+            target = base / "files/lib/wine/dxvk/aarch64-windows/d3d11.dll"
+            component_dir.mkdir(parents=True)
+            target.parent.mkdir(parents=True)
+            (base / "version").write_text("1 build-1\n")
+            rows = []
+            for scope in ("*", "42", "4294967295", "2147483648"):
+                source = root / ("default" if scope == "*" else scope)
+                source.write_text(scope)
+                rows.append("%s\tproton\tbuild-1\tdxvk\t%s\t%s\t%s\n" % (
+                    scope, target.relative_to(base),
+                    hashlib.sha256(source.read_bytes()).hexdigest(), source,
+                ))
+            (component_dir / "desired.tsv").write_text("".join(rows))
+            script = COMPAT["BL_COMPONENTS_SETUP"] + '\nverb=waitforexitandrun; bl_components "$1"\n'
+            for value in (
+                "42", "00042", "43", "-1", "-0001", "4294967295", "-2147483648",
+                "2147483648", "-1///", "0", "-0", "000", "-2147483649", "4294967296",
+                "999999999999999999999999999", "not-an-id", "1+1", "",
+            ):
+                with self.subTest(prefix=value):
+                    env = dict(os.environ, HOME=str(root), STEAM_COMPAT_DATA_PATH="/steam/compatdata/" + value)
+                    target.write_text("untouched")
+                    subprocess.run(["bash", "-c", script, "test", str(base)], env=env, check=True, capture_output=True)
+                    scope = MODULE["game_id"](env)
+                    expected = "untouched" if scope is None else scope if scope in {"42", "4294967295", "2147483648"} else "*"
+                    self.assertEqual(target.read_text(), expected)
 
     def test_engine_fixes_follow_the_games_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,6 +175,22 @@ class GameEnvironmentTest(unittest.TestCase):
         for bad in (1, "a\0b", "x" * 8193):
             with self.assertRaises(ValueError):
                 MODULE["apply_config"]({}, {**config, "dxvkConfig": bad}, "42")
+
+    def test_game_texture_filtering_overrides_default_without_leaking(self):
+        default = "d3d9.samplerAnisotropy = 16"
+        game = "d3d9.samplerAnisotropy = 4"
+        config = {
+            "version": 1,
+            "shared": {},
+            "games": {},
+            "dxvkConfig": default,
+            "dxvkConfigGames": {"42": game, "43": ""},
+        }
+        self.assertEqual(MODULE["apply_config"]({}, config, "42")["DXVK_CONFIG"], game)
+        self.assertNotIn("DXVK_CONFIG", MODULE["apply_config"]({}, config, "43"))
+        self.assertEqual(MODULE["apply_config"]({}, config, "44")["DXVK_CONFIG"], default)
+        with self.assertRaises(ValueError):
+            MODULE["apply_config"]({}, {**config, "dxvkConfigGames": []}, "42")
 
     def test_game_ids_and_probes(self):
         for prefix in ("", "/compatdata/0", "/compatdata/0-123", "/compatdata/nope", "/compatdata/4294967296"):
@@ -257,10 +340,46 @@ class GameEnvironmentTest(unittest.TestCase):
             self.assertIn('"$here/proton"', (extra / COMPAT["EXTRA_WRAPPER"]).read_text())
             self.assertIn("GE-Proton11-7", [entry["name"] for entry in COMPAT["tool_catalog"](str(home), None)])
 
+    def test_droiddeck_proton_is_adopted_and_labelled_like_any_other_extra(self):
+        # Its folder has a space ("DroidDeck-Proton 11-7.5") and its internal name starts with
+        # "DroidDeck-Proton-", which lower-cases to our own tools' prefix: neither may matter.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / "label").write_text("Compatible\n")
+            COMPAT["display_name"].__globals__["LABEL_FILE"] = str(home / "label")
+            tools = home / "compatibilitytools.d"
+            extra = tools / "DroidDeck-Proton 11-7.5"
+            extra.mkdir(parents=True)
+            (extra / "proton").write_text("")
+            (extra / "toolmanifest.vdf").write_text('"manifest" { "version" "2" "commandline" "/proton %verb%" "require_tool_appid" "4185400" }')
+            (extra / "compatibilitytool.vdf").write_text(
+                '"compatibilitytools" { "compat_tools" { "DroidDeck-Proton-11-7.5" { "install_path" "." '
+                '"display_name" "DroidDeck-Proton 11-7.5" "from_oslist" "windows" "to_oslist" "linux" } } }')
+            COMPAT["build_tool"](str(tools / COMPAT["TOOL"]), None)
+            protect = COMPAT["adopt_extras"](str(tools))
+            self.assertEqual(protect, {"DroidDeck-Proton-11-7.5": "DroidDeck-Proton 11-7.5"})
+            compat = (extra / "compatibilitytool.vdf").read_text()
+            self.assertIn('"DroidDeck-Proton-11-7.5"', compat)
+            self.assertIn('"display_name" "DroidDeck-Proton 11-7.5 (Compatible)"', compat)
+            self.assertNotIn("require_tool_appid", (extra / "toolmanifest.vdf").read_text())
+            self.assertIn('"$here/proton"', (extra / COMPAT["EXTRA_WRAPPER"]).read_text())
+            catalog = COMPAT["tool_catalog"](str(home), None)
+            self.assertIn({"name": "DroidDeck-Proton-11-7.5", "display": "DroidDeck-Proton 11-7.5 (Compatible)",
+                           "dir": "DroidDeck-Proton 11-7.5", "valve": False}, catalog)
+            config = home / "config.vdf"
+            config.write_text(config_text([("0", COMPAT["TOOL"]), ("42", "DroidDeck-Proton-11-7.5")]))
+            COMPAT["register_default"](str(config), ["42", "43"], protect=protect)
+            self.assertEqual(mapping_of(config.read_text()), {"0": COMPAT["TOOL"], "42": "DroidDeck-Proton-11-7.5", "43": COMPAT["TOOL"]})
+            # Once removed it is no longer runnable, and its games go back to the default.
+            changes, _ = COMPAT["plan_mapping"]({"0": COMPAT["TOOL"], "42": "DroidDeck-Proton-11-7.5"}, ["42"], [COMPAT["TOOL"]], COMPAT["TOOL"], {})
+            self.assertEqual(changes, {"42": COMPAT["TOOL"]})
+
     def test_both_proton_wrappers_call_environment_launcher(self):
         for script in (COMPAT["LAUNCHER_SH"], COMPAT["EXTRA_WRAPPER_SH"] % "proton"):
             subprocess.run(["bash", "-n"], input=script, text=True, check=True)
-            self.assertIn('exec ${BL_TASKSET:-} /usr/local/bin/droiddeck-game-env', script)
+            # Started through bl_run, which execs it - or, for a store game with cloud saves, waits
+            # for it so droiddeck-store-launch --exited can follow (test_store_launch.CloudHooks).
+            self.assertIn('bl_run ${BL_TASKSET:-} /usr/local/bin/droiddeck-game-env', script)
 
     def test_wrappers_preload_the_session_library_before_the_input_shim(self):
         overlay = "/root/.local/share/Steam/ubuntu12_64/gameoverlayrenderer.so"
@@ -316,6 +435,57 @@ class ProtonDefaultTest(unittest.TestCase):
     def test_uninstalled_titles_are_forgotten(self):
         changes, auto = self.plan({"0": self.TOOL}, [], self.TOOL, {"10": self.TOOL})
         self.assertEqual((changes, auto), ({}, {}))
+
+    def test_per_game_proton_override_and_inherit_follow_steam_mappings(self):
+        current = {"0": self.TOOL, "10": self.TOOL, "11": "GE-Proton11-7", "12": self.TOOL}
+        overrides = {"10": "GE-Proton11-7", "11": None}
+        changes, auto = COMPAT["plan_mapping"](
+            current, ["10", "11", "12"], self.NAMES, COMPAT["TOOL_11"],
+            {"10": self.TOOL, "12": self.TOOL}, overrides=overrides)
+        self.assertEqual(changes, {"0": COMPAT["TOOL_11"], "10": "GE-Proton11-7", "11": COMPAT["TOOL_11"], "12": COMPAT["TOOL_11"]})
+        self.assertEqual(auto, {"11": COMPAT["TOOL_11"], "12": COMPAT["TOOL_11"]})
+
+    def test_per_game_requests_resolve_identity_and_defer_a_new_live_tool(self):
+        requests = {
+            "10": {"valve": False, "dir": "GE-Proton11-7"},
+            "11": None,
+            "12": {"valve": True, "dir": "Proton 11.0 (ARM64)"},
+            "0": None,
+        }
+        self.assertEqual(
+            COMPAT["requested_games"](requests, self.CATALOG),
+            {"10": "GE-Proton11-7", "11": None, "12": COMPAT["TOOL_11"]},
+        )
+        self.assertEqual(
+            COMPAT["requested_games"](requests, self.CATALOG, [self.TOOL, COMPAT["TOOL_11"]]),
+            {"10": COMPAT["DEFERRED_GAME_TOOL"], "11": None, "12": COMPAT["TOOL_11"]},
+        )
+
+    def test_missing_per_game_proton_is_preserved_during_default_registration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.vdf"
+            config.write_text(config_text([
+                ("0", self.TOOL),
+                ("10", "GE-Proton9-1"),
+                ("11", self.TOOL),
+            ]))
+            (Path(tmp) / "games.json").write_text(json.dumps({
+                "version": 1,
+                "games": {
+                    "10": {"valve": False, "dir": "GE-Proton9-1"},
+                },
+            }))
+
+            COMPAT["register_default"](
+                str(config), ["10", "11"], default=COMPAT["TOOL_11"],
+                catalog=self.CATALOG, directory=tmp,
+            )
+
+            self.assertEqual(mapping_of(config.read_text()), {
+                "0": COMPAT["TOOL_11"],
+                "10": "GE-Proton9-1",
+                "11": COMPAT["TOOL_11"],
+            })
 
     def test_the_last_side_to_change_wins(self):
         state = {"default": self.TOOL, "applied": 5}
@@ -435,11 +605,18 @@ class DirectAudioPrefixTest(unittest.TestCase):
         wine = self.tool / "files/bin-arm64/wine"
         wine.write_text("#!/bin/sh\necho wine-11.0-4c8f2e1 '(Staging)'\n")
         wine.chmod(0o755)
-        self.audio = base / "directaudio"
-        for arch in ("aarch64-windows", "i386-windows", "aarch64-unix"):
-            (self.audio / "lib/wine" / arch).mkdir(parents=True)
-        (self.audio / "lib/wine/aarch64-windows/winedirectaudio.drv").write_bytes(b"arm64x")
-        (self.audio / "lib/wine/i386-windows/winedirectaudio.drv").write_bytes(b"i386")
+        # Proton's own winepulse.so names the audio interface: the classic table never imports
+        # PsCreateSystemThread, the system-thread one (Proton-CachyOS) always does.
+        (self.tool / "files/lib/wine/aarch64-unix").mkdir(parents=True)
+        self.winepulse = self.tool / "files/lib/wine/aarch64-unix/winepulse.so"
+        self.winepulse.write_bytes(b"\x7fELF classic wine 11 pulse driver")
+        self.sets = base / "directaudio"
+        for set_name in ("linux-wine11", "linux-wine11-systhread"):
+            for arch in ("aarch64-windows", "i386-windows", "aarch64-unix"):
+                (self.sets / set_name / "lib/wine" / arch).mkdir(parents=True)
+            (self.sets / set_name / "lib/wine/aarch64-windows/winedirectaudio.drv").write_bytes(b"arm64x-" + set_name.encode())
+            (self.sets / set_name / "lib/wine/i386-windows/winedirectaudio.drv").write_bytes(b"i386")
+        self.audio = self.sets / "linux-wine11"
         self.compat = base / "compat"
         self.windows = self.compat / "pfx/drive_c/windows"
         for folder in ("system32", "syswow64"):
@@ -447,9 +624,10 @@ class DirectAudioPrefixTest(unittest.TestCase):
         self.reg = self.compat / "pfx/user.reg"
 
     def run_setup(self):
-        script = COMPAT["BL_DIRECTAUDIO_SETUP"] + '\nbl_directaudio "$1"\necho "WINEDLLPATH=$WINEDLLPATH"\n'
-        env = dict(os.environ, BL_DIRECTAUDIO=str(self.audio), STEAM_COMPAT_DATA_PATH=str(self.compat))
+        script = COMPAT["BL_DIRECTAUDIO_SETUP"] + '\nbl_directaudio "$1"\necho "WINEDLLPATH=$WINEDLLPATH"\necho "WINE_AUDIO_DRIVER=${WINE_AUDIO_DRIVER:-}"\n'
+        env = dict(os.environ, BL_DIRECTAUDIO=str(self.sets), STEAM_COMPAT_DATA_PATH=str(self.compat))
         env.pop("WINEDLLPATH", None)
+        env.pop("WINE_AUDIO_DRIVER", None)
         return subprocess.run(["bash", "-c", script, "bash", str(self.tool)], env=env, capture_output=True, text=True, check=True)
 
     def audio_values(self):
@@ -470,14 +648,42 @@ class DirectAudioPrefixTest(unittest.TestCase):
         result = self.run_setup()
         self.assertIn("DirectAudio selected", result.stderr)
         self.assertIn("WINEDLLPATH=%s/lib/wine" % self.audio, result.stdout)
+        # Proton-CachyOS's mmdevapi takes the driver list from this variable, and its launcher
+        # pre-sets it to pulse,alsa unless it is already set.
+        self.assertIn("WINE_AUDIO_DRIVER=directaudio,pulse\n", result.stdout)
         self.assertEqual(self.link("system32"), str(self.audio / "lib/wine/aarch64-windows/winedirectaudio.drv"))
         self.assertEqual(self.link("syswow64"), str(self.audio / "lib/wine/i386-windows/winedirectaudio.drv"))
-        self.assertEqual((self.windows / "system32/winedirectaudio.drv").read_bytes(), b"arm64x")
+        self.assertEqual((self.windows / "system32/winedirectaudio.drv").read_bytes(), b"arm64x-linux-wine11")
         self.assertEqual(self.audio_values(), [("[Software\\\\Wine\\\\Drivers]", '"Audio"="directaudio,pulse"')])
         before = self.reg.read_text()
         self.assertNotIn("DirectAudio selected", self.run_setup().stderr)
         self.assertEqual(self.reg.read_text(), before)
         self.assertEqual(sorted(os.listdir(self.windows / "system32")), ["winedirectaudio.drv"])
+
+    def test_without_a_prefix_it_waits_for_the_next_launch(self):
+        result = self.run_setup()
+        self.assertIn("takes effect the next time this game starts", result.stderr)
+        self.assertEqual(self.link("system32"), None)
+
+    def test_the_system_thread_set_is_picked_from_winepulse_not_the_version(self):
+        self.reg.write_text("WINE REGISTRY Version 2\n\n#arch=win64\n")
+        self.winepulse.write_bytes(b"\x7fELF cachyos pulse driver PsCreateSystemThread NtSetInformationThread")
+        result = self.run_setup()
+        systhread = self.sets / "linux-wine11-systhread"
+        self.assertIn("DirectAudio ready (Wine 11, linux-wine11-systhread)", result.stderr)
+        self.assertIn("WINEDLLPATH=%s/lib/wine" % systhread, result.stdout)
+        self.assertEqual(self.link("system32"), str(systhread / "lib/wine/aarch64-windows/winedirectaudio.drv"))
+        self.assertEqual((self.windows / "system32/winedirectaudio.drv").read_bytes(), b"arm64x-linux-wine11-systhread")
+
+    def test_no_set_for_the_interface_leaves_protons_own_audio(self):
+        self.reg.write_text("WINE REGISTRY Version 2\n\n#arch=win64\n")
+        self.winepulse.write_bytes(b"\x7fELF PsCreateSystemThread")
+        shutil.rmtree(self.sets / "linux-wine11-systhread")
+        result = self.run_setup()
+        self.assertIn("no driver set for the linux-wine11-systhread interface", result.stderr)
+        self.assertIn("WINEDLLPATH=\n", result.stdout)
+        self.assertIn("WINE_AUDIO_DRIVER=\n", result.stdout)
+        self.assertFalse((self.windows / "system32/winedirectaudio.drv").exists())
 
     def test_older_selections_are_upgraded(self):
         self.reg.write_text('WINE REGISTRY Version 2\n\n[SoftwareWineDrivers] 1790995967\n#time=1dd52e24550e980\n"Audio"="directaudio"\n'

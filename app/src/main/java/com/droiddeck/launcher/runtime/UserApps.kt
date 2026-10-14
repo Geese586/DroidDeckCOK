@@ -32,6 +32,8 @@ object UserApps {
     private const val TAG = "UserApps"
     const val GUEST_DIR = "/opt/droiddeck-apps"
     const val SCRIPT_LAUNCHER = "/usr/local/bin/droiddeck-script-run"
+    /** An app the desktop asked for (droiddeck-open): its key, then the path it was started from there. */
+    const val DESKTOP_IMPORT = "desktop-import"
     private const val FLATPAK_OVERRIDES = ".flatpak"
     private const val ICON_SIZE = 256
     private const val ELF_SCAN_LIMIT = 4000
@@ -69,10 +71,11 @@ object UserApps {
         class AppImage(val file: File) : Source()
         class GitHub(val repo: String) : Source()
         class Flatpak(val id: String) : Source()
+        class FlatpakBundle(val file: File) : Source()
     }
 
-    /** [icon]: a picked file's path or a suggested icon's URL. */
-    class Request(val source: Source, val name: String?, val icon: String?)
+    /** [icon]: a picked file's path or a suggested icon's URL. [meta]: files written into the added app's folder. */
+    class Request(val source: Source, val name: String?, val icon: String?, val meta: Map<String, String> = emptyMap())
 
     /** How a script's folder reaches the session: linked in place, or copied in ([bytes] to copy). */
     class ScriptPlan(val folder: File, val copy: Boolean, val bytes: Long)
@@ -120,10 +123,11 @@ object UserApps {
         val name = request.name?.trim()?.takeIf { it.isNotEmpty() }
         return withIcon(context, request.icon) { icon ->
             when (val s = request.source) {
-                is Source.Script -> addScript(context, s.file, name, icon, onProgress)
-                is Source.AppImage -> AppImageManager.import(context, s.file, name, icon) { onProgress(it, -1) }
+                is Source.Script -> addScript(context, s.file, name, icon, request.meta, onProgress)
+                is Source.AppImage -> AppImageManager.import(context, s.file, name, icon, request.meta) { onProgress(it, -1) }
                 is Source.GitHub -> addFromGitHub(context, s.repo, name, icon, onProgress)
                 is Source.Flatpak -> addFlatpak(context, s.id, name, icon, onProgress)
+                is Source.FlatpakBundle -> addFlatpakBundle(context, s.file, name, icon, onProgress)
             }
         }
     }
@@ -195,6 +199,14 @@ object UserApps {
         }.distinct()
     }
 
+    /** The desktop's import of [key] as the session sees it: an added script's folder, or an AppImage's. */
+    fun desktopImport(context: Context, key: String, path: String): String? {
+        root(context).listFiles()?.firstOrNull { dir ->
+            File(dir, "entry").isFile && FileUtils.readString(File(dir, DESKTOP_IMPORT))?.lineSequence()?.firstOrNull() == key
+        }?.let { return "$GUEST_DIR/${it.name}" }
+        return AppImageManager.desktopImport(context, key, path)?.let { "${AppImageManager.GUEST_DIR}/$it" }
+    }
+
     fun planScript(script: File): ScriptPlan {
         val folder = script.canonicalFile.parentFile ?: script.parentFile!!
         var scanned = 0
@@ -207,7 +219,9 @@ object UserApps {
         RandomAccessFile(f, "r").use { val b = ByteArray(4); it.read(b) == 4 && b[0] == 0x7f.toByte() && b[1] == 'E'.code.toByte() && b[2] == 'L'.code.toByte() && b[3] == 'F'.code.toByte() }
     } catch (e: Exception) { false }
 
-    private fun addScript(context: Context, script: File, name: String?, icon: File?, onProgress: (String, Int) -> Unit): String? {
+    private fun addScript(
+        context: Context, script: File, name: String?, icon: File?, meta: Map<String, String>, onProgress: (String, Int) -> Unit,
+    ): String? {
         if (!script.isFile) return context.getString(R.string.user_apps_file_gone)
         val plan = planScript(script)
         val base = root(context).apply { mkdirs() }
@@ -230,6 +244,7 @@ object UserApps {
             FileUtils.writeString(File(dir, "name"), title)
             FileUtils.writeString(File(dir, "source"), script.canonicalPath)
             if (icon != null && !saveIcon(icon, File(dir, "icon.png"))) Log.w(TAG, "icon ${icon.path} could not be read")
+            meta.forEach { (k, v) -> FileUtils.writeString(File(dir, k), v) }
             writeScriptEntry(context, dir)
             return null
         } catch (e: Exception) {
@@ -422,9 +437,36 @@ object UserApps {
     private fun addFlatpak(context: Context, id: String, name: String?, icon: File?, onProgress: (String, Int) -> Unit): String? {
         if (!FlatpakManager.ready(context)) FlatpakManager.setup(context, onProgress)?.let { return it }
         FlatpakManager.install(context, id, onProgress)?.let { return it }
+        customiseFlatpak(context, id, name, icon)
+        return null
+    }
+
+    private fun addFlatpakBundle(context: Context, file: File, name: String?, icon: File?, onProgress: (String, Int) -> Unit): String? {
+        if (!file.isFile) return context.getString(R.string.user_apps_file_gone)
+        if (!FlatpakManager.ready(context)) FlatpakManager.setup(context, onProgress)?.let { return it }
+        // Shared storage is bound into the runtime at its own path; a file anywhere else is copied in.
+        val shared = Environment.getExternalStorageDirectory().canonicalPath
+        val copy = File(LinuxRuntime.rootDir(context), "tmp/droiddeck-bundle.flatpak").takeIf { !file.canonicalPath.startsWith("$shared/") }
+        try {
+            if (copy != null) {
+                onProgress(context.getString(R.string.user_apps_copying, file.name), -1)
+                file.copyTo(copy.apply { parentFile?.mkdirs() }, overwrite = true)
+            }
+            val (id, problem) = FlatpakManager.installBundle(context, copy?.let { "/tmp/${it.name}" } ?: file.canonicalPath, onProgress)
+            problem?.let { return it }
+            if (id != null) customiseFlatpak(context, id, name, icon)
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "bundle ${file.path}", e)
+            return e.message ?: context.getString(R.string.user_apps_failed)
+        } finally {
+            copy?.delete()
+        }
+    }
+
+    private fun customiseFlatpak(context: Context, id: String, name: String?, icon: File?) {
         val custom = overrides(context, id)
         if (name != null) FileUtils.writeString(File(custom.apply { mkdirs() }, "name"), name)
-        if (icon != null && !saveIcon(icon, File(custom, "icon.png"))) Log.w(TAG, "icon ${icon.path} could not be read")
-        return null
+        if (icon != null && !saveIcon(icon, File(custom.apply { mkdirs() }, "icon.png"))) Log.w(TAG, "icon ${icon.path} could not be read")
     }
 }

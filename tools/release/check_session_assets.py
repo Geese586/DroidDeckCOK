@@ -34,24 +34,28 @@ NATIVE = (
     'assets/linuxfs/usr/local/bin/droiddeck-gpu',
     'assets/linuxfs/usr/local/bin/droiddeck-desktop-gpu',
     'assets/linuxfs/usr/local/lib/droiddeck/uruntime',
-    'assets/linuxfs/usr/local/lib/droiddeck-wlroots/libwlroots-0.20.so',
     'assets/linuxfs/usr/local/lib/mangoapp/mangoapp',
-    'assets/linuxfs/etc/xdg/labwc/autostart',
-    'assets/linuxfs/etc/xdg/labwc/rc.xml',
-    'assets/linuxfs/etc/xdg/lxqt/panel.conf',
     'assets/linuxfs/usr/lib/firefox/defaults/pref/droiddeck.js',
     'assets/droiddeck-esync/index.json',
     'assets/droiddeck-esync/index.json.sig',
-    # The Linux payload's own later additions, which a checkout that never re-ran the cross build
-    # lacks: the SSBS preload a game's environment can ask for, and the msitools set the Windows
-    # component installer drives.
+    # The SSBS preload a game's environment can ask for, the audit preload the fast path writes its
+    # violation report through, and the msitools set the Windows component installer drives.
     'assets/linuxfs/libssbs.so',
+    'assets/linuxfs/libblaudit.so',
     'assets/linuxfs/usr/local/lib/droiddeck-msitools/msiinfo',
     'assets/linuxfs/usr/local/lib/droiddeck-msitools/cabextract',
+    'assets/linuxfs/usr/local/lib/droiddeck-msitools/7z',
+    'assets/linuxfs/usr/local/lib/droiddeck-msitools/7z.so',
     # The helper that owns Android's output stream when the client or a game is put on the
     # DirectAudio relay. Its absence is silent in the same way: the relay part is added to the
     # session and then has no program to run.
     'lib/arm64-v8a/libdirectaudiorelay.so',
+    # The GOG / Epic / Amazon download engines. 0.4.0's headline feature and the same shape of
+    # silence as the sink module: without it StoresNative reports "engine unavailable" and the
+    # three stores quietly fall back to their slow Java loops, with every other check passing.
+    # Built by the Rust step, or taken prebuilt out of the release APK - either way it has to be
+    # in the package.
+    'lib/arm64-v8a/libdroiddeckstores.so',
 )
 
 # The daemon's sink modules ride inside the audio bundle, and CI compiles two of them in while it
@@ -62,10 +66,13 @@ NATIVE = (
 # up with "no output device" - while every other check here passes. Pin the bundle CI produces,
 # and unpack it to name what is missing when the pin does not match.
 PULSE_BUNDLE = 'assets/pulseaudio.tzst'
-PULSE_BUNDLE_SHA256 = 'ae8a394e381c8c4592f158e45ad4ec74a317bb93462e9ce3618d7dc897ea544a'
+PULSE_BUNDLE_SHA256 = '12fa999bcf35577d3799bbe7b13bb778d59c191a95778ff24715a5f65c0bd890'
 PULSE_MODULES = (
     'modules/arm64/module-aaudio-sink.so',
-    'modules/arm64/module-directaudio-sink.so',
+    # Upstream renamed this one in 0.4.0 ("-native-", beside the tunnel/virtual sinks): the daemon
+    # now loads module-directaudio-native-sink, and the older bundle's module-directaudio-sink
+    # would leave DirectAudio with nothing to load.
+    'modules/arm64/module-directaudio-native-sink.so',
 )
 
 
@@ -95,15 +102,26 @@ def audio_bundle_problem(content):
             'tools/build_local.sh, or take the bundle out of the same version\'s release APK.')
 
 
-def check(apk, overlay=OVERLAY):
+def source_assets(overlay=OVERLAY):
     sources = list((overlay / 'usr/local/bin').glob('droiddeck-*'))
     sources += [path for path in [overlay / 'usr/local/bin/steam-compatibility'] if path.is_file()]
     sources += [path for path in (overlay / 'usr/bin').rglob('*') if path.is_file()]
+    result = {source: 'assets/linuxfs/' + source.relative_to(overlay).as_posix() for source in sources}
+    if overlay == OVERLAY:
+        desktop = overlay.parent / 'desktop'
+        for name in ['droiddeck-desktop', 'droiddeck-gpu', 'droiddeck-desktop-gpu', 'kwin_wayland_wrapper']:
+            result[desktop / name] = 'assets/linuxfs/usr/local/bin/' + name
+        result[desktop / 'firefox-droiddeck.js'] = 'assets/linuxfs/usr/lib/firefox/defaults/pref/droiddeck.js'
+        result[desktop / 'droiddeck-clipboard.desktop'] = 'assets/linuxfs/etc/xdg/autostart/droiddeck-clipboard.desktop'
+        result[overlay.parent.parent / 'mangoapp/mangoapp'] = 'assets/linuxfs/usr/local/bin/mangoapp'
+    return result
+
+
+def check(apk, overlay=OVERLAY):
     errors = []
     with ZipFile(apk) as package:
         present = {info.filename for info in package.infolist()}
-        for source in sources:
-            asset = 'assets/linuxfs/' + source.relative_to(overlay).as_posix()
+        for source, asset in source_assets(overlay).items():
             try:
                 content = package.read(asset)
             except KeyError:

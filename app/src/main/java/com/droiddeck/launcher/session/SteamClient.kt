@@ -89,10 +89,11 @@ object SteamClient {
             val guest = mutableListOf(
                 "/usr/bin/env", "-i", "HOME=/root", "USER=root", "PATH=/usr/local/bin:/usr/bin:/bin",
                 "LANG=C.UTF-8", "XDG_DATA_HOME=/root/.local/share",
-                // The branch has to be the session's. The script records it in package/beta and the
-                // session shim kills a client whose beta disagrees with the configured branch, so an
-                // install made on the wrong one is a restart loop rather than a session.
-                "BL_STEAM_CHANNEL=" + SessionPrefs.steamChannel(context),
+                // No BL_STEAM_CHANNEL: upstream 0.4.0 dropped the branch setting and both guest
+                // scripts now pin steamdeck_publicbeta themselves (droiddeck-session forces it on
+                // the command line, droiddeck-steam-install records it in package/beta). Leaving
+                // it out keeps an install made here on the same branch the session expects, which
+                // is what the shim's beta check compares.
                 "BL_STEAM_LOCAL_DIR=" + dir.absolutePath,
                 "/usr/local/bin/droiddeck-steam-install",
             )

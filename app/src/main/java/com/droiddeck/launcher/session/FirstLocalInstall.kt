@@ -285,10 +285,16 @@ internal object FirstLocalInstall {
                         onProgress(number, total, stage, percent)
                     }
                     // The desktop unpacks over the rootfs like the runtime does, so it goes through
-                    // the same extractor - and is recorded under its own id, which is what keeps a
-                    // desktop installed with no catalog reachable from being marked as the seed.
+                    // the same extractor. 0.4.0 pins the desktop to one package - KDE, tagged
+                    // DESKTOP_KDE_TAG - and desktopInstalled() only counts a marker that carries
+                    // exactly that tag, so a hand-carried archive can no longer go in unvouched:
+                    // the pinned entry verifies the file's sha256 and the marker is written as the
+                    // tag, which is what makes the step count as done. The LXQt desktop upstream
+                    // replaced fails that checksum and is skipped with a message instead of being
+                    // unpacked into a session that now starts KWin and cannot use it.
                     Part.DESKTOP -> DesktopCatalog.installTarFromFile(
-                        context, DesktopCatalog.DESKTOP_ID, null, item.source, listener)
+                        context, DesktopCatalog.DESKTOP_ID, DesktopCatalog.desktopEntry(context),
+                        item.source, listener)
                     Part.FONTS -> Fonts.install(context, item.source) { stage, percent ->
                         onProgress(number, total, stage, percent)
                     }

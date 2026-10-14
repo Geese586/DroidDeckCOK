@@ -34,7 +34,7 @@ class RuntimeInstallService : Service() {
         // A local archive the user picked; [releaseFrom] returns null in that case, which is exactly
         // the offline case a local install exists for.
         val archive = intent?.getStringExtra(EXTRA_ARCHIVE)?.let(::File)
-        startForeground(NOTIFICATION_ID, notification(getString(if (removal) R.string.rtinst_removing else R.string.user_apps_starting), -1))
+        startForeground(NOTIFICATION_ID, notification(getString(if (LinuxRuntimeInstaller.isMaintaining()) R.string.desktop_removing else if (removal) R.string.rtinst_removing else R.string.user_apps_starting), -1))
         if (release == null && archive == null && !removal) {
             stopSelf(startId)
             return START_NOT_STICKY
@@ -73,7 +73,7 @@ class RuntimeInstallService : Service() {
             PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_session)
-            .setContentTitle(getString(if (LinuxRuntimeInstaller.isRemoving()) R.string.rtinst_title_removing else R.string.rtinst_title_installing))
+            .setContentTitle(getString(if (LinuxRuntimeInstaller.isMaintaining()) R.string.desktop_removing else if (LinuxRuntimeInstaller.isRemoving()) R.string.rtinst_title_removing else R.string.rtinst_title_installing))
             .setContentText(stage)
             .setProgress(100, percent.coerceIn(0, 100), percent < 0)
             .setContentIntent(open)

@@ -71,12 +71,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import com.droiddeck.launcher.core.AppLanguage
 import com.droiddeck.launcher.core.DeviceSupport
 import com.droiddeck.launcher.core.DownloadSource
 import com.droiddeck.launcher.core.PhantomProcessLimit
 import com.droiddeck.launcher.core.PhantomProcessStatus
 import com.droiddeck.launcher.session.SessionPrefs
+import com.droiddeck.launcher.stores.download.StoreDownloadTier
 import com.droiddeck.launcher.R
 
 // The Setup page: runtime and device checks, tools, frame generation and launch settings.
@@ -164,21 +167,28 @@ internal fun SetupPanel(
     val limitBlocks = PhantomProcessLimit.blocksSteam(s.phantomProcessStatus)
     val signedIn = s.offlineAccount != null
     var showLimitDetails by rememberSaveable { mutableStateOf(false) }
-    // Four tabs instead of one long scroll; LB and RB turn them from anywhere on the page. Build
-    // and credits are on the Updates page.
-    val tabs = listOf(stringResource(R.string.setup_tab_overview), stringResource(R.string.setup_tab_controller), stringResource(R.string.setup_tab_session), stringResource(R.string.setup_tab_launcher))
+    var editSgdbKey by remember { mutableStateOf(false) }
+    if (editSgdbKey) SgdbKeyDialog(s.sgdbUserKey, onSave = { a.onSgdbKey(it); editSgdbKey = false }, onDismiss = { editSgdbKey = false })
+    // Four tabs by scope, a chip row with one gliding selection; LB and RB turn them from
+    // anywhere on the page. Build and credits are on the Updates page.
+    val tabs = listOf(stringResource(R.string.setup_tab_overview), stringResource(R.string.setup_tab_controller), stringResource(R.string.setup_tab_launcher), stringResource(R.string.setup_tab_diagnostics))
     var tab by rememberSaveable { mutableStateOf(0) }
-    val tabFocus = remember { List(tabs.size) { FocusRequester() } }
+    val chipFocus = remember { List(4) { FocusRequester() } }
     var tabTurned by remember { mutableStateOf(false) }
     val pick: (Int) -> Unit = { i -> tab = i; tabTurned = true }
     val inputModeManager = LocalInputModeManager.current
-    // The control a controller was on went with the old tab: it lands on the new tab itself.
+    // The control a controller was on went with the old tab: it lands on the new tab's chip.
     LaunchedEffect(tab) {
         if (tabTurned && inputModeManager.inputMode == InputMode.Keyboard) {
             androidx.compose.runtime.withFrameNanos { }
-            runCatching { tabFocus[tab].requestFocus() }
+            runCatching { chipFocus[tab].requestFocus() }
         }
     }
+    val wide = !LocalNarrowPane.current
+    val runtimeOk = s.ready && !s.busy && !s.removalPending
+    val checks = listOf(gpuOk, runtimeOk, !limitBlocks, signedIn)
+    val passing = checks.count { it }
+    var showChecks by rememberSaveable { mutableStateOf(false) }
     Rise(0, Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.fillMaxSize().bumpers(
@@ -187,15 +197,12 @@ internal fun SetupPanel(
             ),
         ) {
             PageHeader(stringResource(R.string.setup_title)) {
-                TabStrip(tabs, tab, pick, Modifier.weight(1f), tabFocus)
+                Box(Modifier.weight(1f)) { SheetChips(tabs, tab, chipFocus, pick) }
             }
             Column(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
                 when (tab) {
                     0 -> {
-                        SectionTitle(stringResource(R.string.setup_system_check), null)
-                        // What Steam needs, one row each: green when done, one button when not. The
-                        // process-limit controls only open under their row.
-                        Column(modifier = Modifier.fillMaxWidth().clip(Shape14).background(colors.surface).border(1.dp, pal.line, Shape14)) {
+                        val gpuCheck: @Composable (Boolean) -> Unit = { divider ->
                             CheckRow(
                                 if (gpuOk) CheckState.OK else CheckState.WARN,
                                 when (gpu.support) {
@@ -208,7 +215,10 @@ internal fun SetupPanel(
                                     com.droiddeck.launcher.gpu.GpuInfo.Support.UNTESTED -> stringResource(R.string.setup_gpu_untested_detail, gpu.displayName(ctx), gpu.supportText(ctx).replaceFirstChar { it.lowercase() })
                                     else -> stringResource(R.string.setup_gpu_unsupported_detail, gpuName)
                                 },
+                                divider = divider,
                             )
+                        }
+                        val runtimeCheck: @Composable (Boolean) -> Unit = { divider ->
                             CheckRow(
                                 when { s.busy -> CheckState.BUSY; !s.ready -> CheckState.WARN; else -> CheckState.OK },
                                 stringResource(R.string.setup_runtime),
@@ -219,7 +229,7 @@ internal fun SetupPanel(
                                     s.available != null && s.available != s.installed -> stringResource(R.string.setup_runtime_update, s.installed ?: stringResource(R.string.setup_installed))
                                     else -> stringResource(R.string.setup_runtime_current, s.installed ?: stringResource(R.string.setup_installed))
                                 },
-                                divider = !s.busy,
+                                divider = divider && !s.busy,
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     // A second way in, for a network that cannot reach GitHub at
@@ -247,8 +257,10 @@ internal fun SetupPanel(
                                     if (s.percent >= 0) LinearProgressIndicator(progress = { s.percent / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp))
                                     else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
                                 }
-                                Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+                                if (divider) Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
                             }
+                        }
+                        val limitCheck: @Composable (Boolean) -> Unit = { divider ->
                             CheckRow(
                                 if (limitBlocks) CheckState.WARN else CheckState.OK,
                                 stringResource(R.string.setup_limit),
@@ -258,6 +270,7 @@ internal fun SetupPanel(
                                     PhantomProcessStatus.UNREADABLE -> stringResource(R.string.setup_limit_unknown)
                                     else -> PhantomProcessLimit.title(ctx, s.phantomProcessStatus)
                                 },
+                                divider = divider && !showLimitDetails,
                             ) {
                                 if (limitBlocks) PrimaryButton(if (showLimitDetails) stringResource(R.string.common_hide) else stringResource(R.string.setup_fix_it), compact = true) { showLimitDetails = !showLimitDetails }
                                 else if (s.phantomProcessStatus != PhantomProcessStatus.NOT_APPLICABLE) {
@@ -286,6 +299,9 @@ internal fun SetupPanel(
                                     processLimitMessage?.let { Text(it, fontSize = 14.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp)) }
                                 }
                             }
+                            if (divider && showLimitDetails) Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+                        }
+                        val accountCheck: @Composable (Boolean) -> Unit = { divider ->
                             CheckRow(
                                 if (signedIn) CheckState.OK else CheckState.WARN,
                                 stringResource(R.string.setup_account),
@@ -296,9 +312,34 @@ internal fun SetupPanel(
                                         else -> stringResource(R.string.setup_signed_in, it)
                                     }
                                 } ?: stringResource(R.string.setup_sign_in),
-                                divider = false,
+                                divider = divider,
                             )
                         }
+                        val all = listOf(gpuCheck, runtimeCheck, limitCheck, accountCheck)
+                        // Everything passes: one line says so, and Details opens the checks in place.
+                        ReadinessCard(
+                            passing, checks.size,
+                            listOfNotNull(
+                                gpu.displayName(ctx),
+                                s.installed?.let { stringResource(R.string.setup_ready_runtime, it) },
+                                stringResource(R.string.setup_ready_limit_off).takeIf { !limitBlocks },
+                                s.offlineAccount?.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.setup_ready_signed_in, it) },
+                            ).joinToString(" · "),
+                            open = showChecks, onDetails = { showChecks = !showChecks },
+                        ) {
+                            val shownChecks = all.filterIndexed { i, _ -> checks[i] }
+                            shownChecks.forEachIndexed { i, check -> check(i < shownChecks.lastIndex) }
+                        }
+                        // Each check that warns is its own card, its Fix it as it always was.
+                        if (passing < checks.size) {
+                            SectionTitle(stringResource(R.string.setup_needs_you), null)
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                all.forEachIndexed { i, check ->
+                                    if (!checks[i]) Column(Modifier.fillMaxWidth().clip(Shape14).background(colors.surface).border(1.dp, AttentionAmber.copy(alpha = 0.5f), Shape14)) { check(false) }
+                                }
+                            }
+                        }
+                        SettingsGroup(stringResource(R.string.setup_runtime)) { runtimeCheck(false) }
                         // Right under the runtime row it mostly exists for: on a network that
                         // cannot reach GitHub, this has to be found before Install is pressed.
                         // DroidDeckCOK: upstream 0.3.2 dropped the mirror setting; the fork keeps it,
@@ -318,8 +359,6 @@ internal fun SetupPanel(
                                 onPick = a.onDownloadSource,
                             )
                         }
-                        SectionTitle(stringResource(R.string.setup_tools), null)
-                        ToolGrid(s, a)
                     }
                     1 -> {
                         val controller = s.controller
@@ -329,80 +368,80 @@ internal fun SetupPanel(
                         if (s.controller == null || a.controller == null) Note(stringResource(R.string.setup_controller_unavailable))
                     }
                     2 -> {
-                        SettingsGroup(stringResource(R.string.setup_session)) {
-                            ChoiceRow(
-                                host, "back-actions", stringResource(R.string.mode_back), stringResource(SessionPrefs.backActionsOrder(s.backActionsInverted)),
-                                listOf(
-                                    false to stringResource(SessionPrefs.BACK_MENU_THEN_QAM),
-                                    true to stringResource(SessionPrefs.BACK_QAM_THEN_MENU),
-                                ), s.backActionsInverted, onPick = a.onBackActionsInverted,
-                            )
-                            SettingsRow(stringResource(R.string.frame_gen_title), stringResource(R.string.frame_gen_hint)) {
-                                Box {
-                                    ValueChip(s.frameGenLabel, host.open == "fg") { host.open = if (host.open == "fg") null else "fg" }
-                                    FrameGenMenu(s, a, host)
+                        val look: @Composable () -> Unit = {
+                            SettingsGroup(stringResource(R.string.setup_group_look)) {
+                                SettingsRow(stringResource(R.string.setup_theme), stringResource(R.string.setup_theme_hint)) {
+                                    Box {
+                                        ValueChip(stringResource(Themes.byId(s.theme).label), host.open == "theme") { host.open = if (host.open == "theme") null else "theme" }
+                                        AnchoredMenu(host.open == "theme", onDismiss = { if (host.open == "theme") host.open = null }, title = stringResource(R.string.setup_theme)) { firstItemFocus ->
+                                            Themes.all.forEachIndexed { index, theme ->
+                                                MenuItem(stringResource(theme.label), checked = s.theme == theme.id, focusRequester = if (index == 0) firstItemFocus else null) {
+                                                    a.onTheme(theme.id)
+                                                    host.open = null
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
+                                ChoiceRow(
+                                    host, "app-scale", stringResource(R.string.setup_app_scale), stringResource(R.string.setup_app_scale_hint),
+                                    com.droiddeck.launcher.core.AppUiPrefs.scales.map { percent ->
+                                        percent to stringResource(
+                                            if (percent == com.droiddeck.launcher.core.AppUiPrefs.DEFAULT_SCALE) R.string.setup_app_scale_default
+                                            else R.string.ctrl_percent, percent,
+                                        )
+                                    }, s.appScale, onPick = a.onAppScale,
+                                )
+                                ToggleRow(host, "launcher-animations", stringResource(R.string.setup_animations), null,
+                                    s.animationsEnabled, onChange = a.onAnimationsEnabled)
+                                LanguageRow(host, s.language, a.onLanguage)
+                                ToggleRow(host, "show-stores", stringResource(R.string.setup_stores), null, s.gameStoresEnabled, onChange = a.onGameStoresEnabled)
                             }
+                        }
+                        val device: @Composable () -> Unit = {
+                            SettingsGroup(stringResource(R.string.setup_group_device)) {
+                                ToggleRow(
+                                    host, "home-screen", stringResource(R.string.setup_home),
+                                    if (s.homeScreenEnabled) stringResource(R.string.setup_home_on) else stringResource(R.string.setup_home_off),
+                                    s.homeScreenEnabled,
+                                ) { a.onHomeScreen(it) }
+                                if (s.homeScreenEnabled) {
+                                    ActionRow(stringResource(R.string.setup_default_home), s.defaultHomeLabel ?: stringResource(R.string.setup_choose_home), stringResource(R.string.setup_choose), a.onHomeApp)
+                                }
+                                ChoiceRow(
+                                    host, "orientation", stringResource(R.string.setup_orientation), null,
+                                    SessionPrefs.orientationOptions.map { (value, label) -> value to stringResource(label) },
+                                    s.orientation, onPick = a.onOrientation,
+                                )
+                                ToggleRow(
+                                    host, "launcher-fullscreen", stringResource(R.string.setup_fullscreen),
+                                    if (s.launcherFullscreen) stringResource(R.string.setup_fullscreen_on) else stringResource(R.string.setup_fullscreen_off),
+                                    s.launcherFullscreen,
+                                ) { a.onLauncherFullscreen(it) }
+                            }
+                        }
+                        val art: @Composable () -> Unit = {
+                            SettingsGroup(stringResource(R.string.setup_group_art)) {
+                                ToggleRow(host, "added-art", stringResource(R.string.mode_added_art), stringResource(R.string.mode_added_art_hint), s.addedGamesArt) { a.onAddedGamesArt(it) }
+                                ActionRow(
+                                    stringResource(R.string.mode_sgdb_key), if (s.sgdbUserKey) stringResource(R.string.mode_sgdb_key_yours) else null,
+                                    stringResource(R.string.mode_sgdb_edit), onClick = { editSgdbKey = true },
+                                )
+                            }
+                        }
+                        // Two columns on a wide page: how it looks; this device and the library's art.
+                        if (wide) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
+                            Column(Modifier.weight(1f)) { look() }
+                            Column(Modifier.weight(1f)) { device(); art() }
+                        } else { look(); device(); art() }
+                    }
+                    3 -> {
+                        SettingsGroup(stringResource(R.string.setup_tab_diagnostics)) {
                             ToggleRow(host, "logs", stringResource(R.string.setup_logs), stringResource(R.string.setup_logs_hint), s.logsEnabled) { a.onLogs() }
                             ToggleRow(host, "agent-commands", stringResource(R.string.setup_agent_commands), null, s.agentCommands) { a.onAgentCommands() }
                             ActionRow(stringResource(R.string.setup_latest_logs), stringResource(R.string.drawer_logs_hint), stringResource(R.string.drawer_share_logs), a.onShareLogs,
                                 progress = com.droiddeck.launcher.session.SessionLogShare.progress)
                             ActionRow(stringResource(R.string.setup_saved_logs), stringResource(R.string.setup_saved_logs_hint, com.droiddeck.launcher.session.SessionPaths.KEEP_SESSIONS), stringResource(R.string.setup_clear_logs), a.onClearLogs)
-                            ToggleRow(
-                                host, "offline", stringResource(R.string.setup_offline),
-                                s.offlineAccount?.let { if (it.isEmpty()) stringResource(R.string.setup_signed_in_unnamed) else stringResource(R.string.setup_signed_in, it) } ?: stringResource(R.string.setup_sign_in_first),
-                                s.offline, enabled = s.offlineAccount != null,
-                            ) { a.onOffline() }
-                        }
-                    }
-                    3 -> {
-                        SettingsGroup(stringResource(R.string.setup_launcher)) {
-                            LanguageRow(host, s.language, a.onLanguage)
-                            ChoiceRow(
-                                host, "app-scale", stringResource(R.string.setup_app_scale), stringResource(R.string.setup_app_scale_hint),
-                                com.droiddeck.launcher.core.AppUiPrefs.scales.map { percent ->
-                                    percent to stringResource(
-                                        if (percent == com.droiddeck.launcher.core.AppUiPrefs.DEFAULT_SCALE) R.string.setup_app_scale_default
-                                        else R.string.ctrl_percent, percent,
-                                    )
-                                }, s.appScale, onPick = a.onAppScale,
-                            )
-                            SettingsRow(stringResource(R.string.setup_theme), stringResource(R.string.setup_theme_hint)) {
-                                Box {
-                                    ValueChip(stringResource(Themes.byId(s.theme).label), host.open == "theme") { host.open = if (host.open == "theme") null else "theme" }
-                                    AnchoredMenu(host.open == "theme", onDismiss = { if (host.open == "theme") host.open = null }, title = stringResource(R.string.setup_theme)) { firstItemFocus ->
-                                        Themes.all.forEachIndexed { index, theme ->
-                                            MenuItem(stringResource(theme.label), checked = s.theme == theme.id, focusRequester = if (index == 0) firstItemFocus else null) {
-                                                a.onTheme(theme.id)
-                                                host.open = null
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            ToggleRow(
-                                host, "home-screen", stringResource(R.string.setup_home),
-                                if (s.homeScreenEnabled) stringResource(R.string.setup_home_on) else stringResource(R.string.setup_home_off),
-                                s.homeScreenEnabled,
-                            ) { a.onHomeScreen(it) }
-                            ToggleRow(
-                                host, "launcher-fullscreen", stringResource(R.string.setup_fullscreen),
-                                if (s.launcherFullscreen) stringResource(R.string.setup_fullscreen_on) else stringResource(R.string.setup_fullscreen_off),
-                                s.launcherFullscreen,
-                            ) { a.onLauncherFullscreen(it) }
-                            ToggleRow(host, "launcher-animations", stringResource(R.string.setup_animations), null,
-                                s.animationsEnabled, onChange = a.onAnimationsEnabled)
-                            if (s.homeScreenEnabled) {
-                                ActionRow(stringResource(R.string.setup_default_home), s.defaultHomeLabel ?: stringResource(R.string.setup_choose_home), stringResource(R.string.setup_choose), a.onHomeApp)
-                            }
-                        }
-                        SettingsGroup(stringResource(R.string.setup_linux_apps)) {
-                            ToggleRow(
-                                host, "store-enabled", stringResource(R.string.setup_store),
-                                if (s.storeEnabled) stringResource(R.string.setup_store_on)
-                                else stringResource(R.string.setup_store_off),
-                                s.storeEnabled,
-                            ) { a.onStoreEnabled(it) }
                         }
                     }
                 }
@@ -411,50 +450,43 @@ internal fun SetupPanel(
     }
 }
 
-/** The launcher's own tools as cards: four across, two by two on a narrow page. */
+/**
+ * The checks as one card while they all pass: a ring with how many pass, "Ready to play" and one
+ * line of what that means, and a Details chip that opens the checks themselves in place ([checks]).
+ */
 @Composable
-private fun ToolGrid(s: FrontEndState, a: FrontEndActions) {
-    val columns = if (LocalNarrowPane.current) 2 else 4
-    val tools = listOf(
-        ToolSpec(Icons.Outlined.Folder, stringResource(R.string.setup_tool_files), stringResource(R.string.setup_tool_files_hint), a.onFiles),
-        ToolSpec(Icons.Outlined.Extension, stringResource(R.string.setup_tool_protons), stringResource(R.string.setup_tool_protons_hint), a.onProtons),
-        ToolSpec(Icons.Outlined.Speed, stringResource(R.string.setup_tool_performance), stringResource(R.string.setup_tool_performance_hint), a.onPerformance),
-        ToolSpec(Icons.Outlined.VideogameAsset, stringResource(R.string.setup_tool_roms), s.romsDir ?: stringResource(R.string.setup_tool_roms_hint), a.onRoms),
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-        for (row in tools.chunked(columns)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-                for (t in row) ToolCard(t, Modifier.weight(1f).fillMaxHeight())
-                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
-    }
-}
-
-private class ToolSpec(val icon: ImageVector, val title: String, val detail: String, val onClick: () -> Unit)
-
-@Composable
-private fun ToolCard(t: ToolSpec, modifier: Modifier) {
+private fun ReadinessCard(passing: Int, total: Int, line: String, open: Boolean, onDetails: () -> Unit, checks: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
-    val src = remember { MutableInteractionSource() }
-    val hot = rememberHot(src)
-    val pressed by src.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, Motion.sp(0.5f, Spring.StiffnessMedium), label = "toolScale")
-    Column(
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = modifier.paneItem("tool:${t.title}")
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(Shape14)
-            .background(if (hot) pal.signal.copy(alpha = 0.10f) else colors.surface)
-            .glideBorder(hot, Shape14, pal.signal, pal.line)
-            .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, role = Role.Button, onClick = t.onClick)
-            .controllerConfirm(onClick = t.onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-    ) {
-        Icon(t.icon, contentDescription = null, tint = if (hot) pal.signal else colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
-        Text(t.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(t.detail, fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    val ready = passing == total
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp).clip(Shape14).background(colors.surface).border(1.dp, pal.line, Shape14)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            val tint = if (ready) pal.good else AttentionAmber
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(52.dp)) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    progress = { passing / total.toFloat().coerceAtLeast(1f) }, strokeWidth = 4.dp,
+                    color = tint, trackColor = tint.copy(alpha = 0.18f), modifier = Modifier.size(52.dp),
+                )
+                Text("$passing/$total", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(if (ready) R.string.setup_ready else R.string.setup_not_ready),
+                    fontSize = 17.sp, fontWeight = FontWeight.Bold, color = colors.onBackground,
+                )
+                if (line.isNotEmpty()) Text(line, fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (passing > 0) SecondaryButton(stringResource(if (open) R.string.common_hide else R.string.setup_details), compact = true, onClick = onDetails)
+        }
+        AnimatedVisibility(open, enter = expandVertically(Motion.sp(1f)) + fadeIn(Motion.sp(1f)), exit = shrinkVertically(Motion.sp(1f)) + fadeOut(Motion.sp(1f))) {
+            Column(Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+                checks()
+            }
+        }
     }
 }
 
@@ -476,14 +508,19 @@ internal fun LaunchSettings(s: FrontEndState, a: FrontEndActions, host: MenuHost
     val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
     // The game's prefix is compatdata/<id>, as droiddeck-game-env reads it: a Steam title's appid, an
     // added game's shortcut appid (unsigned). Recommended scans the game's own folder either way.
-    val wincompKey = game?.let {
-        if (it.library == com.droiddeck.launcher.frontend.Library.ADDED) Integer.toUnsignedString(it.appId)
-        else it.appId.takeIf { id -> id > 0 }?.toString()
-    }
+    val wincompKey = game?.takeIf { it.library == com.droiddeck.launcher.frontend.Library.ADDED || it.appId > 0 }?.profileKey
     var wincompOpen by remember(wincompKey) { mutableStateOf<Boolean?>(null) }
     val wincompPicks = remember(wincompKey, wincompOpen) { wincompKey?.let { com.droiddeck.launcher.session.WinComponents.picks(context, it) }.orEmpty() }
     val cards = buildList<@Composable (Modifier) -> Unit> {
-        add { m -> SettingCard(stringResource(R.string.setup_card_components), stringResource(R.string.setup_card_components_hint), "card:components", m) { a.onComponents(true) } }
+        add { m ->
+            val back = stringResource(R.string.hop_from_games)
+            // Components is its own section: the card hops there, and B on it comes back here.
+            SettingCard(stringResource(R.string.setup_card_components), stringResource(R.string.setup_card_components_hint), "card:components", m.hopSource("card:components")) {
+                val at = Hops.sources["card:components"]
+                if (at == null) a.onComponents(true)
+                else Hops.go(HopOrigin("games", HOP_SURFACE_GAMES, null, "card:components", at, back, dest = "components", page = "components")) { a.onComponents(true) }
+            }
+        }
         add { m ->
             Box(m) {
                 SettingCard(stringResource(R.string.frame_gen_title), s.frameGenLabel, "card:fg", Modifier.fillMaxSize()) {
@@ -493,6 +530,15 @@ internal fun LaunchSettings(s: FrontEndState, a: FrontEndActions, host: MenuHost
             }
         }
         if (controller != null) add { m -> SettingCard(stringResource(R.string.setup_card_controls), stringResource(R.string.setup_card_controls_hint), "card:controls", m, controller.onMapping) }
+        // An Epic game's own launch choices, kept in its sidecar so a launch from the Steam client
+        // honours them too (droiddeck-store-launch reads the same file).
+        // Epic's launch choices; cloud saves live in the game's Cloud saves view, so a GOG game has no card.
+        val cardStore = com.droiddeck.launcher.stores.Store.byId(game?.source.orEmpty())?.takeIf { it == com.droiddeck.launcher.stores.Store.EPIC }
+        if (cardStore != null && game?.gameFiles != null) add { m ->
+            Box(m) {
+                StoreLaunchCard(host, game.gameFiles!!, cardStore)
+            }
+        }
         if (wincompKey != null) add { m ->
             SettingCard(
                 stringResource(R.string.wincomp_title),
@@ -505,6 +551,7 @@ internal fun LaunchSettings(s: FrontEndState, a: FrontEndActions, host: MenuHost
     if (opened != null && wincompKey != null && game != null) WinComponentsDialog(
         wincompKey, game.name, game.gameFiles, opened, compat = game.protonPrefix,
         steamAppId = game.appId.takeIf { game.library != com.droiddeck.launcher.frontend.Library.ADDED },
+        game = game,
     ) { wincompOpen = null }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         for (row in cards.chunked(columns)) {
@@ -512,6 +559,53 @@ internal fun LaunchSettings(s: FrontEndState, a: FrontEndActions, host: MenuHost
                 for (card in row) card(Modifier.weight(1f).fillMaxHeight())
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
+        }
+    }
+}
+
+/** Epic's account page behind its sign-in: signing in there presents any step the account still owes. */
+private const val EPIC_RESOLVE_URL = "https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Faccount%2Fpersonal"
+
+/** The Epic card: the sign-in and offline switches, read from and written to the game's sidecar, and Resolve Epic sign-in. */
+@Composable
+private fun StoreLaunchCard(host: MenuHost, folder: java.io.File, store: com.droiddeck.launcher.stores.Store) {
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    var sidecar by remember(folder) { mutableStateOf(com.droiddeck.launcher.stores.StoreGameSidecar.read(folder)) }
+    val options = sidecar?.epic ?: com.droiddeck.launcher.stores.EpicOptions()
+    val epic = store == com.droiddeck.launcher.stores.Store.EPIC
+    val key = "store-" + store.id
+    val value = buildList {
+        if (epic && options.offline) add(stringResource(R.string.epic_card_offline))
+        else if (epic && options.eos) add(stringResource(R.string.epic_card_eos))
+    }.ifEmpty { listOf(stringResource(R.string.epic_card_none)) }.joinToString(" · ")
+    // Each switch goes straight to the sidecar on disk - both launch paths read it there - and the
+    // card shows what was read back, so a write that did not take is never shown as done.
+    fun set(change: (com.droiddeck.launcher.stores.EpicOptions) -> com.droiddeck.launcher.stores.EpicOptions) {
+        Thread({
+            val written = runCatching { com.droiddeck.launcher.stores.StoreGameSidecar.updateEpic(folder, change) }
+                .onFailure { android.util.Log.w("EpicLaunchCard", "could not write ${folder.name}: ${it.message}") }.getOrNull()
+            if (written != null) android.util.Log.i("EpicLaunchCard", "epic options ${written.id} eos=${written.epic.eos} offline=${written.epic.offline}")
+            else android.util.Log.w("EpicLaunchCard", "epic options not saved for ${folder.name}")
+            com.droiddeck.launcher.stores.StoresState.post { sidecar = written ?: com.droiddeck.launcher.stores.StoreGameSidecar.read(folder) }
+        }, "epic-options").start()
+    }
+    SettingCard(store.shortLabel, value, "card:$key", Modifier.fillMaxSize()) {
+        host.open = if (host.open == key) null else key
+    }
+    AnchoredMenu(host.open == key, onDismiss = { if (host.open == key) host.open = null }, title = store.shortLabel) { first ->
+        if (epic) {
+            MenuItem(stringResource(R.string.epic_eos), checked = options.eos, focusRequester = first) { set { it.copy(eos = !it.eos) } }
+            MenuItem(stringResource(R.string.epic_offline), checked = options.offline) { set { it.copy(offline = !it.offline) } }
+        }
+        if (epic) {
+        // Epic asks some accounts to accept something once (privacy policy, EULA) before a game may
+        // sign in - EOS's "corrective action". Signing in on Epic's site shows it.
+        MenuItem(stringResource(R.string.epic_resolve), checked = false) {
+            host.open = null
+            runCatching {
+                appContext.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(EPIC_RESOLVE_URL)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
         }
     }
 }
