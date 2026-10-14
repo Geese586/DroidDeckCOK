@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -79,6 +80,60 @@ class FirstLocalInstallTest {
         )
     }
 
+    @Test fun aThirdPartyProtonThatWentInIsNotReportedAsAnAbsentTool() {
+        // The installer answers null for "the build went in", while the step's own tool is null
+        // only when found() never made the step at all - and those two mean opposite things. A "?:"
+        // over the pair read every success as the second, which is what put
+        // "安装失败：no compatibility tool matches that archive" under three Protons the run's own
+        // log had just recorded as "droiddeck-proton-extra: installed ...". Held apart here so the
+        // fold cannot come back.
+        val tool = ProtonExtras.tools.first()
+        assertNull(FirstLocalInstall.extrasProblem(tool, null))
+        assertEquals(
+            "That file cannot be read",
+            FirstLocalInstall.extrasProblem(tool, "That file cannot be read"),
+        )
+        assertEquals(
+            FirstLocalInstall.NO_COMPATIBILITY_TOOL,
+            FirstLocalInstall.extrasProblem(null, null),
+        )
+    }
+
+    @Test fun aRunWhereEverythingWentInHasNothingToReport() {
+        // Ten steps, all of them in: a dialog listing ten "installed" lines tells a user who just
+        // watched the run nothing, and buries the one line that would matter on a run that half
+        // worked - so the caller shows nothing at all, and this is what it asks.
+        val outcomes = (1..10).map { step(null) }
+        assertTrue(!FirstLocalInstall.worthReporting(outcomes, null, false))
+        assertTrue(FirstLocalInstall.failedSteps(outcomes).isEmpty())
+    }
+
+    @Test fun theReportNamesTheStepsThatFailedAndOnlyThose() {
+        // "which step failed" is the whole question a report exists to answer, so the failing ones
+        // come out by their 1-based number, in the order they ran, with the rest left out.
+        val outcomes = listOf(step(null), step("boom"), step(null), step("nope"), step(null))
+        assertTrue(FirstLocalInstall.worthReporting(outcomes, null, false))
+        assertEquals(listOf(2, 4), FirstLocalInstall.failedSteps(outcomes))
+    }
+
+    @Test fun aStepThatWentQuietIsWorthARunEvenWhenItFinished() {
+        // The watchdog's step is not a failure of its own - the run may still have gone on to
+        // finish - but it is the one thing the log cannot say for itself, so it is reported.
+        val outcomes = listOf(step(null), step(null))
+        assertTrue(FirstLocalInstall.worthReporting(outcomes, null, true))
+        assertTrue(FirstLocalInstall.failedSteps(outcomes).isEmpty())
+    }
+
+    @Test fun anErrorOutsideTheStepsIsWorthAReportWithNoOutcomeToItsName() {
+        // An Error thrown out of a step takes the step's own outcome with it, so the report has
+        // nothing but the message - and still has to open.
+        assertTrue(FirstLocalInstall.worthReporting(emptyList(), "OutOfMemoryError", false))
+        assertTrue(FirstLocalInstall.failedSteps(emptyList()).isEmpty())
+    }
+
+    private fun step(problem: String?): FirstLocalInstall.Outcome = FirstLocalInstall.Outcome(
+        FirstLocalInstall.Found(FirstLocalInstall.Part.FONTS, File(folder, "fonts")), problem)
+
     @Test fun aFolderOfExportedDriversIsOneStepWhateverIsInIt() {
         // Three drivers, one of them a bundle: the step is the folder, so a run of them is one line
         // of progress rather than three, and it is the folder that is handed to the install.
@@ -126,6 +181,23 @@ class FirstLocalInstallTest {
     @Test fun theDesktopArchiveIsNeitherTheRuntimeNorTheSeed() {
         folder.put("desktop.tar.zst")
         assertEquals(listOf(FirstLocalInstall.Part.DESKTOP), parts())
+    }
+
+    @Test fun theDesktopTranslationsAreTheirOwnStepRightAfterTheDesktop() {
+        // Upstream's desktop ships English only, and the translations ride beside it as their own
+        // archive: a device whose desktop already went in must still be offered them, so the step
+        // exists whether or not the desktop archive is in the same folder.
+        val pack = folder.put("desktop-l10n.tar.zst", 16)
+        folder.put("desktop-kde.tar.zst", 64)
+        assertEquals(
+            listOf(FirstLocalInstall.Part.DESKTOP, FirstLocalInstall.Part.L10N),
+            parts(),
+        )
+        // And on its own, which is the folder of someone who installed the desktop before the pack
+        // existed: the step is still there, and with it the play page's button.
+        File(folder, "desktop-kde.tar.zst").delete()
+        assertEquals(listOf(FirstLocalInstall.Part.L10N), parts())
+        assertEquals(pack.absolutePath, FirstLocalInstall.found(folder).single().source.absolutePath)
     }
 
     @Test fun aFontsFolderPickedOnItsOwnIsTheFontStepAndNothingElse() {

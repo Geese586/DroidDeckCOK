@@ -100,12 +100,12 @@ android {
         // official "0.4.1" is ahead on its second component, so the update page would read every
         // release DroidDeck makes as older than this build (see ui/UpdatesForkPage.kt).
         versionName "4.0"
-        // This fork's own label: the upstream release above, spelled in full - the fork carries no
-        // extra build count, so "0.4.0" reads as "COK(0.4.0)" in the settings dialog and as
-        // "(COK0.4.0)" beside the official version on the updates page. Kept out of the line above
-        // on purpose; the packaging script names the APK in dist/ after the line above, not after
-        // this.
-        buildConfigField "String", "FORK_VERSION", "\"0.4.0\""
+        // This fork's own label: the upstream release above plus a fork-only fourth component, so
+        // "0.4.0.1" reads as "COK(0.4.0.1)" in the settings dialog and as "(COK0.4.0.1)" beside the
+        // official version on the updates page. Kept out of the line above on purpose - a fourth
+        // component can never collide with an upstream tag, and the packaging script names the APK
+        // in dist/ after the line above, not after this.
+        buildConfigField "String", "FORK_VERSION", "\"0.4.0.1\""
         buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
         buildConfigField "String", "SOURCE_COMMIT", "\"${sourceCommit}\""
         buildConfigField "int", "PR_NUMBER", "${prNumber}"

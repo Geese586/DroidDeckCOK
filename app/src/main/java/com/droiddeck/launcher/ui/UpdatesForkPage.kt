@@ -60,7 +60,7 @@ private const val PROJECT_URL = "https://github.com/Geese586/DroidDeckCOK"
  * by hand with each upstream merge, beside the versionName in `app/build.gradle`.
  *
  * This fork's own build count is not part of either number here: it lives in its own field
- * (`FORK_VERSION`, printed by the settings dialog as "COK(0.4.0)" and here as "(COK0.4.0)")
+ * (`FORK_VERSION`, printed by the settings dialog as "COK(0.4.0.1)" and here as "(COK0.4.0.1)")
  * precisely so it can never be read as a version anything compares against.
  */
 private const val UPSTREAM_BASE = "0.4.0"

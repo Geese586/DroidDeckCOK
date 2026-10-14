@@ -33,6 +33,8 @@ import com.droiddeck.launcher.gpu.TurnipDriver
 import com.droiddeck.launcher.gpu.Lossless
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.runtime.DesktopCatalog
+import com.droiddeck.launcher.runtime.DesktopLangExport
+import com.droiddeck.launcher.runtime.DesktopLanguage
 import com.droiddeck.launcher.runtime.LinuxRuntimeInstaller
 import com.droiddeck.launcher.runtime.DeckyManager
 import com.droiddeck.launcher.session.SessionService
@@ -42,11 +44,14 @@ import com.droiddeck.launcher.session.OfflineMode
 import com.droiddeck.launcher.session.ProtonExtras
 import com.droiddeck.launcher.session.ComponentsManager
 import com.droiddeck.launcher.session.FirstLocalInstall
+import com.droiddeck.launcher.session.FirstInstallLog
 import com.droiddeck.launcher.ui.ComponentsPage
 import com.droiddeck.launcher.session.GameSaves
 import com.droiddeck.launcher.session.SessionLogShare
 import com.droiddeck.launcher.session.SessionPrefs
 import com.droiddeck.launcher.session.SteamClient
+import com.droiddeck.launcher.session.SteamCdn
+import com.droiddeck.launcher.session.SteamCdnProbe
 import com.droiddeck.launcher.session.SteamRepair
 import com.droiddeck.launcher.core.CpuCores
 import com.droiddeck.launcher.core.DownloadSource
@@ -164,6 +169,10 @@ class MainActivity : ComponentActivity() {
     private var onSavePicked: ((File) -> Unit)? = null
     /** A driver export waiting for the storage permission, to open its folder picker once answered. */
     private var exportAfterPermission = false
+    /** The same wait, for the desktop's language dump. */
+    private var langExportAfterPermission = false
+    /** The same wait again, for copying the one-click install's log out. */
+    private var firstLocalLogsAfterPermission = false
     private var controllerSettings by mutableStateOf<ControllerPrefs.Settings?>(null)
     private var catalog by mutableStateOf<List<DesktopCatalog.Entry>?>(null)
     private var catalogLoading by mutableStateOf(false)
@@ -189,6 +198,8 @@ class MainActivity : ComponentActivity() {
     private var gpuClockPin by mutableStateOf(false)
     private var prootNoSeccomp by mutableStateOf(false)
     private var prootFastPath by mutableStateOf(true)
+    /** The one-click install's last report, on screen until it is dismissed: a Toast was too short. */
+    private var firstLocalReport by mutableStateOf<String?>(null)
     private var guestHostname by mutableStateOf(SessionPrefs.DEFAULT_GUEST_HOSTNAME)
     private var phantomWarning by mutableStateOf<String?>(null)
     private var phantomProcessStatus by mutableStateOf(PhantomProcessStatus.NOT_APPLICABLE)
@@ -200,6 +211,10 @@ class MainActivity : ComponentActivity() {
     private var animationsEnabled by mutableStateOf(true)
     /** Where GitHub-hosted downloads go: DownloadSource.OFFICIAL or DownloadSource.CHINA. */
     private var downloadSource by mutableStateOf(DownloadSource.OFFICIAL)
+    /** Which of Valve's two client-update edges Steam client installs pin (DroidDeckCOK). */
+    private var steamCdn by mutableStateOf(com.droiddeck.launcher.session.SteamCdn.AUTO)
+    private var steamLineTestBusy by mutableStateOf(false)
+    private var steamLineTestEdges by mutableStateOf<List<com.droiddeck.launcher.session.SteamCdnProbe.Edge>?>(null)
     private var gameStoresEnabled by mutableStateOf(true)
     private var gameStoresSpeedTier by mutableStateOf("fast")
     private var storesOpenTab by mutableStateOf(SessionPrefs.STORES_OPEN_LIBRARY)
@@ -256,6 +271,14 @@ class MainActivity : ComponentActivity() {
     private val pickExportDriversDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { drivers.exportTo(it) }
     }
+    /** The one pick the desktop's language dump needs: the folder it is written into. */
+    private val pickDesktopLangDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { exportDesktopLangTo(it) }
+    }
+    /** The one pick the install log needs: the folder the files are copied into. */
+    private val pickFirstLocalLogDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { saveFirstLocalLogsTo(it) }
+    }
     private val pickLossless = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { importLossless(it) }
     }
@@ -303,11 +326,92 @@ class MainActivity : ComponentActivity() {
         ))
     }
 
+    /**
+     * Pack the desktop's language files into a folder the user picks. Same shape as [exportDrivers]:
+     * the write goes to shared storage, which on this targetSdk still needs the old permission, so
+     * ask for it first and open the folder picker once answered.
+     */
+    private fun exportDesktopLang() {
+        if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            langExportAfterPermission = true
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), LANG_PERMISSION)
+            return
+        }
+        pickDesktopLangDir.launch(InAppFilePicker.buildDirIntent(
+            this, getString(R.string.desktop_lang_export_pick),
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).path,
+        ))
+    }
+
+    /** Builds the dump into [folder] on a worker thread and says where it landed, or that it did not. */
+    private fun exportDesktopLangTo(folder: File) {
+        DesktopLangExport.prepare(this, folder) { zip ->
+            val text = if (zip == null) getString(R.string.desktop_lang_export_failed)
+                else getString(R.string.desktop_lang_export_saved, zip.path.removePrefix("/storage/emulated/0/"))
+            android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Puts the desktop on Traditional Chinese: the same two small files the one-click install
+     * writes as the Chinese pack goes in, so a device whose pack arrived earlier - or whose
+     * language was picked in KDE since - can be set without going through the whole install again.
+     * Plasma reads the file as it starts, so the desktop wants a restart to show it.
+     */
+    private fun setDesktopLanguage() {
+        val ok = DesktopLanguage.applyTraditionalChinese(this)
+        android.widget.Toast.makeText(
+            this,
+            getString(if (ok) R.string.desktop_lang_applied else R.string.desktop_lang_apply_failed),
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    /**
+     * Copies the one-click install's log - this run's, and the guest commands' own files beside it -
+     * into a folder the user picks, so a device with no shell can still hand the run over. Same
+     * storage prompt as the other exports, which this targetSdk still needs.
+     */
+    private fun saveFirstLocalLogs() {
+        if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            firstLocalLogsAfterPermission = true
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), LOG_PERMISSION)
+            return
+        }
+        pickFirstLocalLogDir.launch(InAppFilePicker.buildDirIntent(
+            this, getString(R.string.first_local_logs_pick),
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).path,
+        ))
+    }
+
+    /** The copy itself, off the main thread, with the folder it landed in said back. */
+    private fun saveFirstLocalLogsTo(folder: File) {
+        Thread({
+            val written = FirstInstallLog.save(this, folder)
+            ui.post {
+                android.widget.Toast.makeText(
+                    this,
+                    if (written.isEmpty()) getString(R.string.first_local_logs_failed)
+                    else getString(R.string.first_local_logs_saved, written.size, folder.path.removePrefix("/storage/emulated/0/")),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        }, "first-install-logs").start()
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == EXPORT_PERMISSION && exportAfterPermission) {
             exportAfterPermission = false
             exportDrivers()
+        }
+        if (requestCode == LANG_PERMISSION && langExportAfterPermission) {
+            langExportAfterPermission = false
+            exportDesktopLang()
+        }
+        if (requestCode == LOG_PERMISSION && firstLocalLogsAfterPermission) {
+            firstLocalLogsAfterPermission = false
+            saveFirstLocalLogs()
         }
     }
 
@@ -703,6 +807,9 @@ class MainActivity : ComponentActivity() {
                         launcherFullscreen = launcherFullscreen,
                         animationsEnabled = animationsEnabled,
                         downloadSource = downloadSource,
+                        steamCdn = steamCdn,
+                        steamLineTestBusy = steamLineTestBusy,
+                        steamLineTestEdges = steamLineTestEdges,
                         firstLocalInstallNeeded = firstLocalNeeded,
                         gameStoresEnabled = gameStoresEnabled,
                         gameStoresSpeedTier = gameStoresSpeedTier,
@@ -835,6 +942,9 @@ class MainActivity : ComponentActivity() {
                             startActivity(Intent(this, com.droiddeck.launcher.files.FileManagerActivity::class.java)
                                 .putExtra(com.droiddeck.launcher.files.FileManagerActivity.EXTRA_START_DIR, dir.absolutePath))
                         },
+                        onExportDesktopLang = { exportDesktopLang() },
+                        onSetDesktopLanguage = { setDesktopLanguage() },
+                        onExportInstallLog = { saveFirstLocalLogs() },
                         onLogs = {
                             SessionPrefs.setLogsEnabled(this, !SessionPrefs.logsEnabled(this))
                             logsEnabled = SessionPrefs.logsEnabled(this)
@@ -893,6 +1003,12 @@ class MainActivity : ComponentActivity() {
                             DownloadSource.set(this, id)
                             downloadSource = id
                         },
+                        onSteamCdn = { id ->
+                            com.droiddeck.launcher.session.SteamCdn.set(this, id)
+                            steamCdn = id
+                        },
+                        onSteamLineTest = { runSteamLineTest() },
+                        onSteamLineTestDismiss = { steamLineTestEdges = null },
                         onGameStoresSpeedTier = { tier -> SessionPrefs.setGameStoresSpeedTier(this, tier); gameStoresSpeedTier = tier },
                         onStoresOpenTab = { tab -> SessionPrefs.setStoresOpenTab(this, tab); storesOpenTab = tab },
                         onNavigated = { navRequest = null },
@@ -1041,6 +1157,15 @@ class MainActivity : ComponentActivity() {
                         confirm = getString(R.string.setup_runtime_local_unverified_confirm),
                         onConfirm = { protonExtraUnverified = null; protons.installProtonArchive(id, archive, null) },
                         onDismiss = { protonExtraUnverified = null },
+                    )
+                }
+                // How the one-click install ended, and the way to the log it wrote: the run is long
+                // enough that a Toast is not a report (see reportFirstLocalInstall).
+                firstLocalReport?.let { report ->
+                    com.droiddeck.launcher.ui.FirstInstallReportDialog(
+                        text = report,
+                        onSave = { saveFirstLocalLogs() },
+                        onDismiss = { firstLocalReport = null },
                     )
                 }
                 flood?.let { f -> com.droiddeck.launcher.ui.LaunchFlood(f.from, onProgress = { floodProgress = it }) { launchFlooded(f) } }
@@ -1818,6 +1943,7 @@ class MainActivity : ComponentActivity() {
         romsDir = SessionPrefs.romsDir(this).takeIf { it.isNotEmpty() }
         logsEnabled = SessionPrefs.logsEnabled(this)
         downloadSource = DownloadSource.current(this)
+        steamCdn = com.droiddeck.launcher.session.SteamCdn.current(this)
         agentCommands = com.droiddeck.launcher.agent.AgentAccess.commandsEnabled(this)
         runningLabel = if (SessionState.running) when (SessionState.mode) {
             SessionService.MODE_DESKTOP -> getString(R.string.rail_desktop)
@@ -2012,6 +2138,26 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * Times both of Valve's client-update edges from this network (Setup › Diagnostics). Nothing
+     * is pinned or remembered by it: the numbers are shown, and the CDN choice on the Launcher
+     * tab is the user's to make from them. The probe touches nothing but the network, and a
+     * second tap while one is running is ignored rather than queued.
+     */
+    private fun runSteamLineTest() {
+        if (steamLineTestBusy) return
+        steamLineTestBusy = true
+        steamLineTestEdges = null
+        Thread({
+            val edges = SteamCdn.hosts(SteamCdn.AUTO).map { host -> SteamCdnProbe.measure(host) }
+            android.util.Log.i("SteamCdn", "line test: " + edges.joinToString { "${it.host} ok=${it.reachable} ${SteamCdnProbe.rateToString(it.bytesPerSecond)}" })
+            ui.post {
+                steamLineTestBusy = false
+                steamLineTestEdges = edges
+            }
+        }, "steam-line-test").start()
+    }
+
+    /**
      * Installs Valve's Steam client from a folder of packages the user fetched elsewhere, for a
      * network that cannot reach Valve's CDN at a usable speed. Nothing is checked here: the folder
      * is handed to the guest, which reads Valve's own manifest out of it and verifies every
@@ -2022,8 +2168,12 @@ class MainActivity : ComponentActivity() {
         steamClientStage = "Preparing…"
         steamClientPercent = -1
         Thread({
+            // Named, not positional: localOnly sits between the folder and the listener, and this
+            // row is the general "from a folder" install - it still takes whatever Valve has that
+            // the folder does not. The CDN is the edge the user pinned in Setup, if any.
             val problem = SteamClient.installFromDir(this, dir,
-                { s, p -> ui.post { steamClientStage = s; steamClientPercent = p } })
+                cdn = SteamCdn.guestValue(steamCdn),
+                onProgress = { s, p -> ui.post { steamClientStage = s; steamClientPercent = p } })
             ui.post {
                 steamClientStage = null
                 steamClientPercent = -1
@@ -2116,6 +2266,14 @@ class MainActivity : ComponentActivity() {
             // installed yet has no directory of its own to measure.
             val need = FirstLocalInstall.spaceNeeded(missing)
             val free = android.os.StatFs(filesDir.path).availableBytes
+            // Written before anything is unpacked, so a run that never gets further - the case the
+            // log exists for - still says what the device is and what it was about to do.
+            FirstInstallLog.begin(
+                this, folder,
+                held.map { firstLocalLabel(it) + " (" + it.source.name + ")" },
+                missing.map { firstLocalLabel(it) + " (" + it.source.name + ")" },
+                need, free,
+            )
             // Settled here rather than in the post below: it lists the folder again, and this is the
             // point where the "everything in it is already in" answer takes the button away - which
             // is what tapping it to find nothing left to do is supposed to do.
@@ -2151,36 +2309,93 @@ class MainActivity : ComponentActivity() {
         failed = false
         stage = getString(R.string.common_working)
         percent = -1
+        val started = System.currentTimeMillis()
         Thread({
-            val outcomes = FirstLocalInstall.install(this, payloads) { number, total, what, value ->
-                ui.post { stage = "$number/$total · $what"; percent = value }
-            }
-            ui.post {
-                busy = false
-                stage = ""
-                percent = -1
-                // Read the device back, so the settings rows and the play page's button agree with
-                // what just happened rather than with what was there before it.
-                installed = LinuxRuntimeInstaller.installedVersion(this)
-                ready = LinuxRuntime.isInstalled(this)
-                steamClientPresent = SteamClient.installed(this)
-                protonSeedPresent = !DesktopCatalog.protonSeedNeeded(this)
-                desktopInstalled = DesktopCatalog.desktopInstalled(this)
-                protons.refreshProtons()
-                firstLocalNeeded = FirstLocalInstall.needed(this)
-                reportFirstLocalInstall(outcomes)
+            // The run has to end in a report whatever happens. Before this it could die on its own
+            // thread - an Error from under an extractor, a failure in the progress callback - and
+            // leave the screen on "working" for ever, which is what a stuck install looked like
+            // from the outside while the work was not running at all.
+            var outcomes: List<FirstLocalInstall.Outcome> = emptyList()
+            var hard: String? = null
+            // A step that went quiet is not a failure on its own, but it is the one thing a user
+            // can tell us about that the log cannot tell itself - so it is kept for the report as
+            // well as shown, and the first one is the one worth keeping.
+            val stall = java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null)
+            try {
+                outcomes = FirstLocalInstall.install(this, payloads, { number, total, what, value ->
+                    ui.post { stage = "$number/$total · $what"; percent = value }
+                }, { what, minutes ->
+                    stall.compareAndSet(null, what to minutes)
+                    ui.post { stage = getString(R.string.first_local_stalled, what, minutes) }
+                })
+            } catch (t: Throwable) {
+                Log.e(TAG, "first-time local install", t)
+                FirstInstallLog.failed(this, "the run itself", t)
+                hard = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+            } finally {
+                val elapsed = System.currentTimeMillis() - started
+                FirstInstallLog.end(this, outcomes, elapsed, hard)
+                val report = hard
+                val done = outcomes
+                val stalled = stall.get()
+                ui.post {
+                    busy = false
+                    stage = ""
+                    percent = -1
+                    // Read the device back, so the settings rows and the play page's button agree with
+                    // what just happened rather than with what was there before it.
+                    installed = LinuxRuntimeInstaller.installedVersion(this)
+                    ready = LinuxRuntime.isInstalled(this)
+                    steamClientPresent = SteamClient.installed(this)
+                    protonSeedPresent = !DesktopCatalog.protonSeedNeeded(this)
+                    desktopInstalled = DesktopCatalog.desktopInstalled(this)
+                    protons.refreshProtons()
+                    firstLocalNeeded = FirstLocalInstall.needed(this)
+                    reportFirstLocalInstall(done, report, stalled, payloads.size)
+                }
             }
         }, "first-local-install").start()
     }
 
-    /** One line per step - installed, or what stopped it - so a run that half worked says which half. */
-    private fun reportFirstLocalInstall(outcomes: List<FirstLocalInstall.Outcome>) {
-        if (outcomes.isEmpty()) return
-        val lines = outcomes.map { outcome ->
-            if (outcome.problem == null) getString(R.string.first_local_done, firstLocalLabel(outcome.found))
-            else getString(R.string.first_local_failed, firstLocalLabel(outcome.found), outcome.problem)
+    /**
+     * What went wrong, and nothing else.
+     *
+     * A run that finished cleanly gets no report at all: a screen of steps saying "installed" is
+     * the one thing a user who just watched the whole thing cannot use, and it buries the line that
+     * matters. What is worth the screen is *which* step stopped - its number, its name, and what it
+     * failed with - plus the two ways a run ends without an outcome of its own: an error raised
+     * outside any step, and a step that went quiet long enough for the watchdog to say so. A clean
+     * run says so in one short Toast and leaves the log on disk for anyone who asks.
+     *
+     * A dialog, not a Toast: the run takes minutes and its result is the only thing that says what
+     * to do next, and a Toast is gone before a user who left the screen comes back. It carries the
+     * way to the log file, which says the rest.
+     */
+    private fun reportFirstLocalInstall(
+        outcomes: List<FirstLocalInstall.Outcome>, hard: String?, stall: Pair<String, Int>?, total: Int,
+    ) {
+        val failed = FirstLocalInstall.failedSteps(outcomes)
+        if (!FirstLocalInstall.worthReporting(outcomes, hard, stall != null)) {
+            android.widget.Toast.makeText(
+                this, getString(R.string.first_local_ok, total), android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            return
         }
-        android.widget.Toast.makeText(this, lines.joinToString("\n"), android.widget.Toast.LENGTH_LONG).show()
+        val lines = mutableListOf<String>()
+        if (hard != null) {
+            // Nothing below the throw was recorded, so how far it got is unknown - the error is the
+            // only thing that can be said, and it is said first.
+            lines.add(getString(R.string.first_local_crashed, hard))
+        } else if (total > 0) {
+            lines.add(getString(R.string.first_local_progress, total - failed.size, total))
+        }
+        stall?.let { (what, minutes) -> lines.add(getString(R.string.first_local_stalled, what, minutes)) }
+        outcomes.forEachIndexed { index, outcome ->
+            val problem = outcome.problem ?: return@forEachIndexed
+            lines.add(getString(
+                R.string.first_local_failed, index + 1, total, firstLocalLabel(outcome.found), problem))
+        }
+        firstLocalReport = lines.joinToString("\n")
     }
 
     /** What a step is called in a message: the parts by name, a Proton build as its own. */
@@ -2189,6 +2404,7 @@ class MainActivity : ComponentActivity() {
         FirstLocalInstall.Part.PROTON -> getString(R.string.mode_proton_arm64)
         FirstLocalInstall.Part.CLIENT -> getString(R.string.mode_steam_client)
         FirstLocalInstall.Part.DESKTOP -> getString(R.string.content_linux_desktop)
+        FirstLocalInstall.Part.L10N -> getString(R.string.first_local_l10n)
         FirstLocalInstall.Part.FONTS -> getString(R.string.first_local_fonts)
         FirstLocalInstall.Part.EXTRAS -> found.tool?.name ?: found.source.name
         // The whole folder, however many drivers are in it: the step is the folder.
@@ -2242,5 +2458,9 @@ class MainActivity : ComponentActivity() {
         private val WCP_EXT = listOf("wcp")
         /** The storage prompt a driver export puts up before its folder picker. */
         private const val EXPORT_PERMISSION = 3
+        /** The same prompt for the desktop's language dump, so the two answers cannot cross. */
+        private const val LANG_PERMISSION = 4
+        /** And again for the one-click install's log copy. */
+        private const val LOG_PERMISSION = 5
     }
 }

@@ -2,6 +2,7 @@ package com.droiddeck.launcher.session
 
 import android.content.Context
 import android.util.Log
+import com.droiddeck.launcher.runtime.GuestOutput
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import java.io.File
 
@@ -115,13 +116,23 @@ object Fonts {
             val hostEnv = process.environment()
             hostEnv["PROOT_LOADER"] = LinuxRuntime.prootLoader(context).path
             hostEnv["PROOT_TMP_DIR"] = context.cacheDir.path
+            // The same switch the session and GuestCommand honour: on a vendor kernel where proot's
+            // seccomp filter misbehaves, this is what keeps the tracer from waiting on a child that
+            // never gets its syscalls answered (see SessionPrefs.prootNoSeccomp). The install used
+            // to run without it, so the one device class that needs it could hang here for ever.
+            if (SessionPrefs.prootNoSeccomp(context)) hostEnv["PROOT_NO_SECCOMP"] = "1"
             LinuxRuntime.prootLibraryPath(context).takeIf { it.isNotEmpty() }?.let { hostEnv["LD_LIBRARY_PATH"] = it }
             val child = process.start()
-            child.inputStream.bufferedReader().useLines { lines -> lines.forEach { Log.i(TAG, it) } }
-            val status = child.waitFor()
-            if (status != 0) Log.w(TAG, "fc-cache exited $status; the fonts are in place anyway")
+            val result = GuestOutput.collect(context, child, LOG_NAME, "fc-cache") { line -> Log.i(TAG, line) }
+            when {
+                result.timedOut -> Log.w(TAG, "fc-cache said nothing for ${result.silentFor / 1000} s and was killed; the fonts are in place anyway")
+                result.status != 0 -> Log.w(TAG, "fc-cache exited ${result.status}; the fonts are in place anyway")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "fc-cache", e)
         }
     }
+
+    /** Where the font refresh's own output goes: the folder the session log share carries. */
+    private const val LOG_NAME = "first-install-fonts"
 }

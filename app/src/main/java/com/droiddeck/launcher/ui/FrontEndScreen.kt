@@ -152,6 +152,11 @@ class FrontEndState(
     val updates: UpdatesState = UpdatesState(),
     /** Where GitHub-hosted downloads come from: DownloadSource.OFFICIAL or DownloadSource.CHINA. */
     val downloadSource: String = DownloadSource.OFFICIAL,
+    /** Setup › Launcher: which of Valve's two client-update edges a Steam client install pins (SteamCdn ids). */
+    val steamCdn: String = com.droiddeck.launcher.session.SteamCdn.AUTO,
+    /** Setup › Diagnostics: the Steam line test - busy while it runs, the edges once it is done. */
+    val steamLineTestBusy: Boolean = false,
+    val steamLineTestEdges: List<com.droiddeck.launcher.session.SteamCdnProbe.Edge>? = null,
     /**
      * Whether a first-time install from a folder still has something to put in - the runtime,
      * Valve's Proton or the Steam client. The play page's button is shown exactly while it is true.
@@ -208,9 +213,16 @@ class FrontEndActions(
     val onPerformance: () -> Unit,
     val onRoms: () -> Unit,
     val onFiles: () -> Unit,
+    /** The Desktop page's Files tab: pack the desktop's language files into a folder the user picks. */
+    val onExportDesktopLang: () -> Unit = {},
+    /** The Desktop page's Files tab: put the desktop itself on Traditional Chinese, once more. */
+    val onSetDesktopLanguage: () -> Unit = {},
     val onBrowseFiles: (File) -> Unit = {},
     val onLogs: () -> Unit,
     val onAgentCommands: () -> Unit = {},
+    /** Setup's Diagnostics: the one-click install's log, saved on its own - the report is only
+     *  shown when a run went wrong, and a run the system killed never got to show one at all. */
+    val onExportInstallLog: () -> Unit = {},
     val onShareLogs: () -> Unit = {},
     val onClearLogs: () -> Unit = {},
     val onOffline: () -> Unit,
@@ -231,6 +243,12 @@ class FrontEndActions(
     val onInstallRuntimeFromFile: () -> Unit = {},
     /** DownloadSource.OFFICIAL or DownloadSource.CHINA: which way GitHub-hosted fetches go. */
     val onDownloadSource: (String) -> Unit = {},
+    /** SteamCdn.AUTO / FASTLY / AKAMAI: which of Valve's client-update edges installs pin. */
+    val onSteamCdn: (String) -> Unit = {},
+    /** Setup › Diagnostics: time both of Valve's client-update edges from this network. */
+    val onSteamLineTest: () -> Unit = {},
+    /** The line test's dialog was closed: the result goes with it. */
+    val onSteamLineTestDismiss: () -> Unit = {},
     val onGameStoresSpeedTier: (String) -> Unit = {},
     val onStoresOpenTab: (String) -> Unit = {},
     val onNavigated: () -> Unit = {},

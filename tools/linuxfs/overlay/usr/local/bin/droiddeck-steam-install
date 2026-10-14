@@ -37,29 +37,70 @@ bl_progress() {
 }
 # Backgrounded only so that the file being written can be measured while it is being written; a
 # component that takes minutes should move the number while it runs rather than when it lands.
+#
+# A host that answers but crawls is the failure people actually hit (DroidDeckCOK): the file does
+# arrive, only slowly enough that the wait is indistinguishable from a hang. So a host that still
+# has another one behind it is measured - fewer than BL_SLOW_BYTES delivered within
+# BL_SLOW_WINDOW seconds and the download is abandoned for the next edge, returning 2 so
+# bl_fetch knows this was a verdict about speed and not about reachability. The abandoned host is
+# re-queued last, never to be measured again, so switching is never worse than waiting out the
+# crawl. A pinned BL_STEAM_CDN leaves nothing to switch to and is never abandoned.
+bl_slow_window=${BL_SLOW_WINDOW:-30}
+bl_slow_bytes=${BL_SLOW_BYTES:-4194304}
+bl_slow_measure=0
 bl_download() {
-  local pid seen
+  local pid seen start=$SECONDS
   curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 "$1" -o "$2" &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
     seen=$(wc -c < "$2" 2>/dev/null || echo 0)
     bl_progress "${seen:-0}"
+    if [ "$bl_slow_measure" = 1 ] && [ $((SECONDS - start)) -ge "$bl_slow_window" ] \
+        && [ "${seen:-0}" -lt "$bl_slow_bytes" ]; then
+      echo "== STEP $(date -u +%H:%M:%S) this CDN edge is slow ($(bl_size "${seen:-0}") in ${bl_slow_window}s); trying the other one"
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 2
+    fi
   done
   wait "$pid"
 }
 # One file, from whichever host will serve it. Moving on to the next host is announced as a
 # "== STEP" line: on screen a retry on the other edge reads as the wait making progress, where
 # going quiet for another two minutes reads as a hang.
+bl_was_abandoned() {
+  local h
+  for h in ${abandoned[@]+"${abandoned[@]}"}; do [ "$h" = "$1" ] && return 0; done
+  return 1
+}
 bl_fetch() {
-  local file=$1 dest=$2 host first=1
-  for host in $(bl_cdn_hosts); do
+  local file=$1 dest=$2 host first=1 candidate rc i=0
+  local -a queue=() abandoned=()
+  while IFS= read -r candidate; do [ -n "$candidate" ] && queue+=("$candidate"); done < <(bl_cdn_hosts)
+  while [ "$i" -lt "${#queue[@]}" ]; do
+    host=${queue[i]}
     if [ "$first" = 1 ]; then
       first=0
     else
       echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $file (again, from ${host#https://})"
     fi
-    if bl_download "$host/$file" "$dest"; then return 0; fi
+    # Measured only while something else is left to switch to, and never again once this fetch has
+    # abandoned the host for slowness: the re-queued copy at the end is the deliberate wait.
+    if [ "$i" -lt "$(( ${#queue[@]} - 1 ))" ] && ! bl_was_abandoned "$host"; then
+      bl_slow_measure=1
+    else
+      bl_slow_measure=0
+    fi
+    rc=0
+    bl_download "$host/$file" "$dest" || rc=$?
+    [ "$rc" = 0 ] && return 0
+    if [ "$rc" = 2 ]; then
+      abandoned+=("$host")
+      queue+=("$host")
+      echo "== STEP $(date -u +%H:%M:%S) $file goes back to ${host#https://} after the other edge is tried"
+    fi
+    i=$((i + 1))
   done
   echo "droiddeck-steam-install: $file came down from no CDN host" >&2
   return 1
@@ -186,6 +227,24 @@ total=$(grep -c . "$work/parts" 2>/dev/null || echo 0)
 # as the install goes.
 bl_total=$(awk '{ s += $3 } END { printf "%d", s + 0 }' "$work/parts")
 bl_total=${bl_total:-0}
+
+# What a stale folder is actually about to cost (DroidDeckCOK): a summary naming how many
+# components have to come over the network and roughly how big they are, against how many the
+# folder already covers - a wait that says its size is one that makes sense, where a silent loop
+# reads as "still fetching?" for the whole of it. Only file names are checked here, cheaply;
+# every file is still verified against the manifest where it is used, so a local copy that fails
+# that check is fetched after all and the true count can only improve. A local-only run fetches
+# nothing by definition, and with no folder there is nothing to contrast against either.
+if [ -n "$local_dir" ] && [ -z "$local_only" ]; then
+  bl_have_folder=0
+  while read -r _bl_block bl_file _bl_size _bl_sum; do
+    [ -f "$local_dir/$bl_file" ] && bl_have_folder=$((bl_have_folder + 1))
+  done < "$work/parts"
+  bl_to_fetch=$((total - bl_have_folder))
+  bl_fetch_mb=$(( (bl_total * bl_to_fetch / total + 1048575) / 1048576 ))
+  bl_plural=""; [ "$bl_to_fetch" = 1 ] || bl_plural="s"
+  echo "== STEP $(date -u +%H:%M:%S) Steam client: $bl_to_fetch component$bl_plural to fetch (about $bl_fetch_mb MB), $bl_have_folder of $total in the folder"
+fi
 
 # A local copy is exactly as likely to be truncated as a download, so one that fails its checksum
 # is treated as absent and fetched instead of failing the install.

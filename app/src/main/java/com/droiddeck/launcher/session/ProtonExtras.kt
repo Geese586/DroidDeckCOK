@@ -7,6 +7,7 @@ import android.os.StatFs
 import android.util.Log
 import com.droiddeck.launcher.core.Downloader
 import com.droiddeck.launcher.core.FileUtils
+import com.droiddeck.launcher.runtime.GuestOutput
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import java.io.File
 import org.json.JSONArray
@@ -15,6 +16,9 @@ import org.json.JSONObject
 /** Immediate download and installation of the optional ARM64 Proton builds. */
 object ProtonExtras {
     private const val TAG = "ProtonExtras"
+
+    /** Where the unpacker's own output goes: the folder the session log share carries. */
+    private const val LOG_NAME = "first-install-proton"
     private const val NEED_BYTES = 4L * 1024 * 1024 * 1024
     private const val RELEASES = "https://api.github.com/repos/%s/releases?per_page=15"
     /** How long a release check stands before the next one goes to GitHub. */
@@ -188,13 +192,19 @@ object ProtonExtras {
      * GitHub at all - the case this path exists for. [asset] is the release the archive was
      * published as, found by file name so the same checksum can be checked; null when no release
      * publishes that name, which is when the caller has to ask the user whether to go on.
+     *
+     * [syncPacks] is whether the esync packs the build wants may be looked up afterwards. False
+     * for a caller that must not touch the network at all: the packs the release came with are
+     * already in the runtime, and a session started later fills in the rest on its own (see
+     * [EsyncPacks.fetchInBackground]).
      */
     @Synchronized
     internal fun installFromFile(context: Context, tool: Tool, archive: File, asset: Asset?,
+                                 syncPacks: Boolean = true,
                                  onProgress: (String, Int) -> Unit): String? {
         if (installInProgress) return "A compatibility tool install is already running"
         installInProgress = true
-        return try { installArchive(context, tool, archive, asset, false, onProgress) } finally { installInProgress = false }
+        return try { installArchive(context, tool, archive, asset, false, syncPacks, onProgress) } finally { installInProgress = false }
     }
 
     private fun installNow(context: Context, tool: Tool, onProgress: (String, Int) -> Unit): String? {
@@ -235,20 +245,21 @@ object ProtonExtras {
             return context.getString(R.string.pextra_incomplete)
         }
 
-        return installArchive(context, tool, archive, asset, true, onProgress)
+        return installArchive(context, tool, archive, asset, true, true, onProgress)
     }
 
     /**
      * Verifies [archive] and puts it in the client's compatibilitytools.d. [asset] is the release
      * it was published as, or null when no release publishes that name and the user has accepted
      * that nothing can check it. [own] is whether the file was downloaded here: one that was is
-     * deleted once it has served, while one the user picked is left where it is.
+     * deleted once it has served, while one the user picked is left where it is. [syncPacks] is
+     * whether the esync packs the build wants may be fetched once it is in (see [installFromFile]).
      *
      * The tree is unpacked by the guest's own droiddeck-proton-extra - the script the session shim
      * would otherwise run - which is told the path and reads the tarball itself.
      */
     private fun installArchive(context: Context, tool: Tool, archive: File, asset: Asset?, own: Boolean,
-                               onProgress: (String, Int) -> Unit): String? {
+                               syncPacks: Boolean, onProgress: (String, Int) -> Unit): String? {
         if (SessionState.running) return "Stop the active session before installing compatibility tools"
         if (!LinuxRuntime.isInstalled(context)) return "Install the Linux runtime first"
         if (!archive.isFile) return "That file cannot be read"
@@ -305,28 +316,35 @@ object ProtonExtras {
             val hostEnv = process.environment()
             hostEnv["PROOT_LOADER"] = LinuxRuntime.prootLoader(context).path
             hostEnv["PROOT_TMP_DIR"] = context.cacheDir.path
+            // The same switch the session honours; see SessionPrefs.prootNoSeccomp. Without it a
+            // kernel that mishandles proot's seccomp filter leaves this child - and the install -
+            // waiting for ever, which is what a run that never gets past this step looks like.
+            if (SessionPrefs.prootNoSeccomp(context)) hostEnv["PROOT_NO_SECCOMP"] = "1"
             LinuxRuntime.prootLibraryPath(context).takeIf { it.isNotEmpty() }?.let { hostEnv["LD_LIBRARY_PATH"] = it }
             val child = process.start()
             var placed: String? = null
-            child.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    Log.i(TAG, line)
-                    // "droiddeck-proton-extra: installed <folder>", the folder as the tarball names it.
-                    line.substringAfter("droiddeck-proton-extra: installed ", "").takeIf { it.isNotEmpty() }?.let { placed = it }
-                    if (line.contains("unpacking", ignoreCase = true) || line.contains("adopted", ignoreCase = true)) {
-                        onProgress(installing, -1)
-                    }
+            val result = GuestOutput.collect(context, child, LOG_NAME, "droiddeck-proton-extra") { line ->
+                Log.i(TAG, line)
+                // "droiddeck-proton-extra: installed <folder>", the folder as the tarball names it.
+                line.substringAfter("droiddeck-proton-extra: installed ", "").takeIf { it.isNotEmpty() }?.let { placed = it }
+                if (line.contains("unpacking", ignoreCase = true) || line.contains("adopted", ignoreCase = true)) {
+                    onProgress(installing, -1)
                 }
             }
-            val status = child.waitFor()
-            if (status != 0) context.getString(R.string.pextra_install_failed, tool.name, status)
+            val status = result.status
+            if (result.timedOut) {
+                context.getString(R.string.pextra_install_stalled, tool.name, result.silentFor / 60_000 + 1)
+            } else if (status != 0) context.getString(R.string.pextra_install_failed, tool.name, status)
             else {
                 if (own) archive.delete()
                 unqueue(context, tool)
                 // A file whose release could not be found has no tag to record. releaseOf() falls
                 // back to the folder name it unpacked to, which is the best the caller can know.
                 if (asset != null) record(context, tool, placed, asset.tag)
-                if (EsyncPacks.enabled(context)) {
+                // Skipped outright when the caller asked for an install that never reaches out
+                // (see installFromFile): the packs the release shipped with are already staged,
+                // and the session fills in whatever else is wanted when it next starts.
+                if (syncPacks && EsyncPacks.enabled(context)) {
                     onProgress(context.getString(R.string.esync_fetching), -1)
                     try {
                         EsyncPacks.fetchWanted(context, root, onProgress)

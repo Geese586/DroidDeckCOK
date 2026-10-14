@@ -86,6 +86,7 @@ import coil.compose.AsyncImage
 import com.droiddeck.launcher.R
 import com.droiddeck.launcher.core.FileUtils
 import com.droiddeck.launcher.frontend.Library
+import com.droiddeck.launcher.runtime.DesktopLangExport
 import com.droiddeck.launcher.runtime.UserApps
 import com.droiddeck.launcher.session.SessionService
 import com.droiddeck.launcher.store.UserAppsState
@@ -404,6 +405,45 @@ private fun DesktopFiles(s: FrontEndState, a: FrontEndActions) {
         SettingsRow(stringResource(R.string.desktop_size), size?.let { FileUtils.sizeToString(it) } ?: "…") {}
         SettingsRow(stringResource(R.string.desktop_remove_title), stringResource(R.string.desktop_remove_text)) {
             UninstallDesktop(enabled = !s.runtimeActionsBlocked, onUninstall = a.onRemoveDesktop)
+        }
+    }
+    if (s.desktopPresent) DesktopLanguageSection(a.onSetDesktopLanguage, a.onExportDesktopLang)
+}
+
+/**
+ * The desktop's language, both ways: put it on Traditional Chinese, and pack up what decides it
+ * when the desktop will not come up in Chinese at all.
+ *
+ * The one-click install sets the language as the Chinese pack goes in, so the row is here for the
+ * device whose pack went in before that existed, and for one whose language was changed in KDE
+ * since - picking a language there is meant to stand, so nothing sets it behind the user's back.
+ * The export is the fallback for a desktop that is in English anyway: the config Plasma reads, the
+ * system's locale files and the scripts that write them, in one zip written where the user points
+ * it, since there is no shell on a device to go looking in.
+ */
+@Composable
+private fun DesktopLanguageSection(onSetChinese: () -> Unit, onExport: () -> Unit) {
+    val progress = DesktopLangExport.progress
+    SettingsGroup(stringResource(R.string.desktop_lang_export_group)) {
+        SettingsRow(
+            stringResource(R.string.desktop_lang_apply),
+            stringResource(R.string.desktop_lang_apply_hint),
+        ) {
+            SecondaryButton(
+                stringResource(R.string.desktop_lang_apply_button),
+                enabled = progress == null, compact = true,
+                onClick = onSetChinese,
+            )
+        }
+        SettingsRow(
+            stringResource(R.string.desktop_lang_export),
+            stringResource(R.string.desktop_lang_export_hint),
+        ) {
+            SecondaryButton(
+                stringResource(R.string.desktop_lang_export_button),
+                enabled = progress == null, compact = true, progress = progress,
+                onClick = onExport,
+            )
         }
     }
 }

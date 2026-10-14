@@ -44,10 +44,12 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.VideogameAsset
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -359,6 +361,29 @@ internal fun SetupPanel(
                                 onPick = a.onDownloadSource,
                             )
                         }
+                        // DroidDeckCOK: which of Valve's two client-update edges a Steam client
+                        // install pins. Automatic keeps the guest script's own order; the two
+                        // pins are for a network where one edge answers but crawls - the case the
+                        // line test on Diagnostics exists to measure.
+                        SettingsGroup(stringResource(R.string.setup_steam_cdn)) {
+                            ChoiceRow(
+                                host, "steam-cdn",
+                                stringResource(R.string.setup_steam_cdn),
+                                when (s.steamCdn) {
+                                    com.droiddeck.launcher.session.SteamCdn.FASTLY -> stringResource(R.string.setup_steam_cdn_fastly_hint)
+                                    com.droiddeck.launcher.session.SteamCdn.AKAMAI -> stringResource(R.string.setup_steam_cdn_akamai_hint)
+                                    else -> stringResource(R.string.setup_steam_cdn_auto_hint)
+                                },
+                                listOf(
+                                    com.droiddeck.launcher.session.SteamCdn.AUTO to stringResource(R.string.setup_steam_cdn_auto),
+                                    com.droiddeck.launcher.session.SteamCdn.FASTLY to stringResource(R.string.setup_steam_cdn_fastly),
+                                    com.droiddeck.launcher.session.SteamCdn.AKAMAI to stringResource(R.string.setup_steam_cdn_akamai),
+                                ),
+                                s.steamCdn,
+                                note = stringResource(R.string.setup_steam_cdn_note),
+                                onPick = a.onSteamCdn,
+                            )
+                        }
                     }
                     1 -> {
                         val controller = s.controller
@@ -442,12 +467,75 @@ internal fun SetupPanel(
                             ActionRow(stringResource(R.string.setup_latest_logs), stringResource(R.string.drawer_logs_hint), stringResource(R.string.drawer_share_logs), a.onShareLogs,
                                 progress = com.droiddeck.launcher.session.SessionLogShare.progress)
                             ActionRow(stringResource(R.string.setup_saved_logs), stringResource(R.string.setup_saved_logs_hint, com.droiddeck.launcher.session.SessionPaths.KEEP_SESSIONS), stringResource(R.string.setup_clear_logs), a.onClearLogs)
+                            // The one-click install's own log, beside the session logs: a report is
+                            // only shown when a run went wrong, so this is the way to it after a run
+                            // that claimed to be fine, and after one the system killed outright.
+                            ActionRow(stringResource(R.string.first_local_logs_row), stringResource(R.string.first_local_logs_row_hint), stringResource(R.string.first_local_logs_save), a.onExportInstallLog)
+                            // DroidDeckCOK: the Steam line test. Valve serves the client from two
+                            // edges and the faster one is a property of the network, so the CDN
+                            // choice on the Launcher tab is made from a measurement, not a guess.
+                            ActionRow(
+                                stringResource(R.string.setup_line_test_row), stringResource(R.string.setup_line_test_hint),
+                                stringResource(if (s.steamLineTestBusy) R.string.common_working else R.string.setup_line_test_run),
+                                a.onSteamLineTest,
+                            )
+                            s.steamLineTestEdges?.let { edges ->
+                                SteamLineTestDialog(edges, onDismiss = a.onSteamLineTestDismiss)
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * What the Steam line test found: one line per edge, then the advice the numbers point at.
+ * A dialog rather than a Toast because the numbers are the whole point - the user is about to
+ * pin one of the two edges from them, or to learn that neither answers and a carried folder is
+ * the only way the client gets in.
+ */
+@Composable
+private fun SteamLineTestDialog(edges: List<com.droiddeck.launcher.session.SteamCdnProbe.Edge>, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.setup_line_test_title)) },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                edges.forEach { edge ->
+                    Text(edge.host, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        if (!edge.reachable) stringResource(R.string.setup_line_test_unreachable, edge.error ?: "")
+                        else {
+                            val parts = mutableListOf(stringResource(R.string.setup_line_test_ok))
+                            if (edge.manifestMillis >= 0) parts.add(
+                                com.droiddeck.launcher.session.SteamCdnProbe.millisToString(edge.manifestMillis),
+                            )
+                            val rate = com.droiddeck.launcher.session.SteamCdnProbe.rateToString(edge.bytesPerSecond)
+                            if (rate.isNotEmpty()) parts.add(rate)
+                            parts.joinToString(" · ")
+                        },
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+                    )
+                }
+                Text(
+                    stringResource(
+                        when {
+                            edges.none { it.reachable } -> R.string.setup_line_test_recommend_none
+                            com.droiddeck.launcher.session.SteamCdnProbe.recommendation(edges) == com.droiddeck.launcher.session.SteamCdn.FASTLY -> R.string.setup_line_test_recommend_fastly
+                            com.droiddeck.launcher.session.SteamCdnProbe.recommendation(edges) == com.droiddeck.launcher.session.SteamCdn.AKAMAI -> R.string.setup_line_test_recommend_akamai
+                            else -> R.string.setup_line_test_recommend_auto
+                        },
+                    ),
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) } },
+    )
 }
 
 /**

@@ -411,6 +411,13 @@ class SessionService : Service() {
                 guest.add("BL_STEAM_LOCAL_DIR=" + it.absolutePath)
                 Log.i(TAG, "steam: installing from the local folder " + it.absolutePath)
             }
+            // DroidDeckCOK: the CDN the user picked in Setup, for the components the folder does
+            // not cover. Empty (automatic) sets nothing - the script reads an empty value as a
+            // host to use alone, which would be a failed install.
+            SteamCdn.guestValue(SteamCdn.current(this)).takeIf { it.isNotEmpty() }?.let {
+                guest.add("BL_STEAM_CDN=$it")
+                Log.i(TAG, "steam: CDN pinned to $it")
+            }
         }
         // Where the guest leaves a request for another session (the desktop's Steam launchers).
         guest.add("BL_LAUNCH_DIR=" + sessionRoot.path)
