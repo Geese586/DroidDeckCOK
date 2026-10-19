@@ -17,6 +17,7 @@ object SettingsReset {
         "gamepadLeft", "gamepadRight", "pipAutoEnter", "unfoldedControls", "stretch16x9", "picturePosition",
         "gpuDriverMode", "androidDriver", "linuxDriver", "linuxDriver.steam", "linuxDriver.desktop",
         "tuSysmem", "glThread", "noGlError", "zinkLazy", "mangoapp", "gpuClockPin", "gamescopeRealtime",
+        "powerMode",
         "directAudio", "mic", "wifiDiscovery", "clientCpusOverride", "clientCpus", "gameCpus",
         "noXalia", "fastSync", "fsyncFirst", "syncFallback", "prootNoSeccomp", "prootFastPath",
         "guestHostname", "fexPreset", "forceSsbs", "logs", "storageDiagnostics",

@@ -85,6 +85,7 @@ import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.session.LoadingState
 import com.droiddeck.launcher.session.PerfHud
 import com.droiddeck.launcher.session.PerfMode
+import com.droiddeck.launcher.session.PowerMode
 import com.droiddeck.launcher.session.SteamRepair
 import com.droiddeck.launcher.session.GameEnvironmentStore
 import com.droiddeck.launcher.session.GameProfileFollowState
@@ -540,9 +541,12 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         } }
         glassesScope.launch { com.droiddeck.launcher.handtracking.HandTracking.settings.collect { updateHandCamera() } }
         glassesScope.launch {
+            // Once, outside the loop: the power switch can only change between sessions, and
+            // reading it per tick would add a SharedPreferences read to a 100 ms poll.
+            val pollMs = PowerMode.glassesPollMs(this@SessionActivity)
             while (true) {
                 updateTrackingRecovery()
-                kotlinx.coroutines.delay(100)
+                kotlinx.coroutines.delay(pollMs)
             }
         }
         glassesScope.launch {

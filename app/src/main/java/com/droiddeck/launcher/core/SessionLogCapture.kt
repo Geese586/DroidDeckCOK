@@ -8,6 +8,7 @@ import java.io.FileOutputStream
 
 object SessionLogCapture {
     private const val TAG = "SessionLogCapture"
+    private const val DEFAULT_SYNC_MS = 2_000L
 
     private var pid = -1
     private var writer: BufferedWriter? = null
@@ -15,7 +16,7 @@ object SessionLogCapture {
     private var syncer: Thread? = null
 
     @Synchronized
-    fun start(target: File) {
+    fun start(target: File, syncMs: Long = DEFAULT_SYNC_MS) {
         stop()
         try {
             val out = target.bufferedWriter()
@@ -39,8 +40,9 @@ object SessionLogCapture {
                 out.write("logcat could not be started; this ROM may not hand an app its own entries.\n")
                 out.flush()
             }
-            target.parentFile?.let { syncer = startSyncing(it) }
-            Log.i(TAG, "app log -> $target (logcat pid $pid)")
+            target.parentFile?.let { syncer = startSyncing(it, syncMs) }
+            Log.i(TAG, "app log -> $target (logcat pid $pid" +
+                (if (syncMs != DEFAULT_SYNC_MS) ", fsync every $syncMs ms" else "") + ")")
         } catch (e: Exception) {
             Log.w(TAG, "could not start the app log", e)
         }
@@ -53,10 +55,11 @@ object SessionLogCapture {
     }
 
     /** flush() only reaches the page cache, and a hard reset on f2fs lost the last minutes of every
-     *  log. Every 2 s the session folder's files (ours and the native parts') are synced to storage. */
-    private fun startSyncing(dir: File): Thread = Thread({
+     *  log. Every `syncMs` ms the session folder's files (ours and the native parts') are synced to
+     *  storage. The caller picks the interval: 2 s from upstream, 15 s with the power switch on. */
+    private fun startSyncing(dir: File, syncMs: Long): Thread = Thread({
         while (true) {
-            try { Thread.sleep(2000) } catch (e: InterruptedException) { break }
+            try { Thread.sleep(syncMs) } catch (e: InterruptedException) { break }
             dir.listFiles()?.forEach { runCatching { FileOutputStream(it, true).use { s -> s.fd.sync() } } }
         }
     }, "session-log-sync").apply { isDaemon = true; start() }

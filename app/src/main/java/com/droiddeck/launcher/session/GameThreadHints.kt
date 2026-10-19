@@ -58,7 +58,7 @@ object GameThreadHints {
     /** At a session's start. The line is for the log. */
     @Synchronized
     fun start(context: Context): String {
-        if (!SessionPrefs.gameThreadHints(context)) return "game thread hints: off"
+        if (!PowerMode.threadHints(context)) return "game thread hints: off"
         // Measured on the Odin 3 (CQ8725S) only; another HAL may boost differently, or not at all.
         if (Build.VERSION.SDK_INT < 31 || Build.SOC_MODEL != "CQ8725S") return "game thread hints: Odin 3 only"
         val hm = context.getSystemService(PerformanceHintManager::class.java)

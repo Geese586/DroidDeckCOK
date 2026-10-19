@@ -340,6 +340,8 @@ class SessionService : Service() {
 
         Log.i(TAG, GpuClockPin.start(this))
         Log.i(TAG, GameThreadHints.start(this))
+        // Which of the two the session ran as, so a power test is reproducible from app.log alone.
+        Log.i(TAG, PowerMode.describe(this))
 
         val size = SessionState.outputSize
         val guest = ArrayList<String>()
@@ -594,7 +596,7 @@ class SessionService : Service() {
         SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
         DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
         NetworkReport.write(this, File(sessionDir, "network.txt"))
-        SessionLogCapture.start(File(sessionDir, "app.log"))
+        SessionLogCapture.start(File(sessionDir, "app.log"), PowerMode.logSyncMs(this))
         return sessionDir
     }
 
@@ -656,7 +658,7 @@ class SessionService : Service() {
         guest.add("BL_SYNC_FALLBACK=" + (if (SessionPrefs.syncFallback(this)) "1" else "0"))
         guest.add("BL_FSYNC_FIRST=" + (if (SessionPrefs.fsyncFirst(this)) "1" else "0"))
         guest.add("BL_GAMESCOPE_REALTIME=" + (if (SessionPrefs.gamescopeRealtime(this)) "1" else "0"))
-        if (SessionState.mode == MODE_STEAM && SessionPrefs.zramCompression(this) &&
+        if (SessionState.mode == MODE_STEAM && PowerMode.zram(this) &&
             com.droiddeck.launcher.core.ZramSupport.supported()) guest.add("BL_ZRAM=1")
         guest.add("BANNER_AUDIO_DIRECT_DECAY=0")
         extraEnv().forEach { guest.add(it) }

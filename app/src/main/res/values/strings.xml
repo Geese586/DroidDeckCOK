@@ -2901,6 +2901,7 @@
     <string name="spatial_opencv_load_error">OpenCV could not load</string>
 
 <string name="games_play_steam_advanced">Advanced play</string>
+<string name="play_power_mode">Power saving (test)</string>
 <string name="gpu_display_hint">Draws frames to the screen. Applies after DroidDeck restarts.</string>
 <string name="selfinst_http">The download answered HTTP %1$d</string>
 <string name="turnip_download_http">download answered HTTP %1$d</string>

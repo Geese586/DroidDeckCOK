@@ -968,6 +968,13 @@ object SessionPrefs {
         prefs(context).edit().putBoolean("zramCompression", on).apply()
     }
 
+    /** The Steam tab's power-saving switch (DroidDeckCOK). False = upstream 0.5.0 logic. */
+    fun powerMode(context: Context): Boolean = prefs(context).getBoolean("powerMode", false)
+
+    fun setPowerMode(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean("powerMode", on).apply()
+    }
+
 
     fun gameStorage(context: Context): String = prefs(context).getString("gameStorage", "") ?: ""
 

@@ -194,6 +194,8 @@ class MainActivity : ComponentActivity() {
     private var fsyncFirst by mutableStateOf(false)
     private var gamescopeRealtime by mutableStateOf(false)
     private var gpuClockPin by mutableStateOf(false)
+    /** The Steam tab's power-saving switch (DroidDeckCOK); false = upstream 0.5.0 behaviour. */
+    private var powerMode by mutableStateOf(false)
     private var prootNoSeccomp by mutableStateOf(false)
     private var prootFastPath by mutableStateOf(true)
     /** The one-click install's last report, on screen until it is dismissed: a Toast was too short. */
@@ -960,6 +962,7 @@ class MainActivity : ComponentActivity() {
         downloadPrefix = DownloadSource.custom(this)
         DownloadSource.probe()
         animationsEnabled = SessionPrefs.animationsEnabled(this)
+        powerMode = SessionPrefs.powerMode(this)
         gameStoresEnabled = SessionPrefs.gameStoresEnabled(this)
         gameStoresSpeedTier = SessionPrefs.gameStoresSpeedTier(this)
         storesOpenTab = SessionPrefs.storesOpenTab(this)
@@ -1007,6 +1010,7 @@ class MainActivity : ComponentActivity() {
                         packageStage = pkgStage,
                         packagePercent = pkgPercent,
                         sessionRunning = SessionState.running,
+                        powerMode = powerMode,
                         backActionsInverted = backActionsInverted,
                         buildLabel = BuildConfig.BUILD_LABEL,
                         oscMode = oscMode,
@@ -1251,6 +1255,7 @@ class MainActivity : ComponentActivity() {
                             animationsEnabled = on
                             com.droiddeck.launcher.ui.Motion.refresh(this)
                         },
+                        onPowerMode = { on -> SessionPrefs.setPowerMode(this, on); powerMode = on },
                         onDownloadSource = { mode ->
                             DownloadSource.setMode(this, mode)
                             downloadSource = mode

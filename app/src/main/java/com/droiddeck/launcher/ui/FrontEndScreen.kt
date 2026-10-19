@@ -124,6 +124,8 @@ class FrontEndState(
     val packageStage: String? = null,
     val packagePercent: Int = -1,
     val sessionRunning: Boolean = false,
+    /** The Steam tab's power-saving switch (DroidDeckCOK): false = upstream 0.5.0 logic. */
+    val powerMode: Boolean = false,
     val removalPending: Boolean = false,
     val runtimeActionsBlocked: Boolean = false,
     val backActionsInverted: Boolean = false,
@@ -234,6 +236,8 @@ class FrontEndActions(
     val onOrientation: (Int) -> Unit = {},
     val onLauncherFullscreen: (Boolean) -> Unit = {},
     val onAnimationsEnabled: (Boolean) -> Unit = {},
+    /** Written straight to SessionPrefs; it takes effect at the next session start. */
+    val onPowerMode: (Boolean) -> Unit = {},
     val onDownloadSource: (String) -> Unit = {},
     val onDownloadMirror: (String) -> Unit = {},
     val onDownloadPrefix: (String) -> Unit = {},
