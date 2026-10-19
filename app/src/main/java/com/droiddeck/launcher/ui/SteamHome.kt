@@ -109,18 +109,40 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
         },
     )
     Box(modifier.clipToBounds()) {
+        val (glasses, glassesSettings) = rememberGlasses()
+        val headset = glasses.present && glasses.canControl
+        val drop = rememberDropSheetState()
+        LaunchedEffect(headset) { if (!headset && (drop.open || drop.shown)) drop.reset() }
+        // DroidDeckCOK: 0.5.0 rewrote SteamHome's hero. The pre-merge copy of it (a second
+        // LiftHero carrying this fork's two extra buttons) was still sitting in this Box and
+        // drawing underneath, so the frame that won was the one without them. Removed - the
+        // buttons below now hang off the 0.5.0 hero, which is the only one left.
         LiftHero(
             key = "steam", tabs = tabs,
+            drop = drop.takeIf { headset },
+            overlay = { lifted ->
+                if (headset) DropSheet(
+                    drop, glassesTabs(glasses), covered = lifted,
+                    button = { enabled ->
+                        PrimaryButton(stringResource(R.string.games_play_steamvr), enabled = !s.busy && glasses.usable, large = true, icon = Icons.Filled.PlayArrow, fill = true,
+                            modifier = Modifier.fillMaxWidth().testTag("play-steamvr")) { if (enabled) { drop.open = false; a.onPlaySteamVr() } }
+                    },
+                ) { tab ->
+                    GlassesGroups(rememberMenuHost(), glasses, glassesSettings,
+                        onRecenter = GlassesMenuMirror::recenter, inSession = false, tab = tab)
+                }
+            },
             onOpen = a.onSteamSettings, onPrimary = a.onPlay,
             modifier = Modifier.matchParentSize(),
             start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
             background = {
                 when {
-                    // The mark wanders over this fade, so it sinks with the wall: drawn a little oversized,
-                    // it still reaches the pane's edges at the sink's 0.95.
-                    games.isEmpty() -> EmptyLibrary(avoid = words) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
+                    games.isEmpty() -> EmptyLibrary(
+                        avoid = words,
+                        wall = if (owned.isEmpty() && featured.isEmpty()) null else { { CapsuleWall(emptyList(), owned = owned, featured = featured) } },
+                    ) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
                     games.size < WALL_MIN_GAMES -> CapsuleFan(games)
-                    else -> CapsuleWall(games)
+                    else -> CapsuleWall(games, owned = owned, featured = featured)
                 }
             },
             scrim = { if (games.size >= WALL_MIN_GAMES) WallFade() },
@@ -130,21 +152,19 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
                     modifier = Modifier.onPlaced { words = it.boundsInParent() },
                 ) {
                     Wordmark(if (narrow) 30.dp else 40.dp)
-                    // Said only when something stands between Play and Steam; a ready runtime needs no words.
                     if (s.busy || !s.ready || (s.available != null && s.available != s.installed)) RuntimeChip(s)
                 }
             },
             button = { click ->
-                // Play stays exactly where it was, the same size; the measured start sits beside it
-                // at the same height, a gap apart, so the two read as one choice with two answers.
+                // DroidDeckCOK: 0.5.0 rewrote this block down to a single Play button; these two went
+                // with it. Play stays exactly where it was, the same size, and the measured start sits
+                // beside it at the same height so the two read as one choice with two answers.
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // Enabled without a runtime: the session's loading screen installs it first.
                         PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, large = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.testTag("play-steam"), onClick = click)
-                        // The same session, with the client's two edges offered on its loading screen
-                        // so a line that crawls can be left for the other one in place. Nothing is
-                        // timed before it starts: on a network where both edges refuse the probe,
-                        // timing them cost every start and answered nothing. Play is untouched.
+                        // The same session, with the client's two edges offered on its loading screen so
+                        // a line that crawls can be left for the other one in place. Nothing is timed
+                        // before it starts. Plain Play is untouched and never carries the menu.
                         SecondaryButton(
                             stringResource(R.string.games_play_steam_advanced),
                             enabled = !s.busy, large = true,
@@ -155,7 +175,7 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
                     // The way in for a device whose network cannot fetch any of it: one folder holding
                     // the runtime, Proton and the Steam client, put in one after another. Shown while
                     // the folder last picked still holds something the device has not got, so a ready
-                    // device never sees it.
+                    // device never sees it. (DroidDeckCOK)
                     if (s.firstLocalInstallNeeded) SecondaryButton(
                         stringResource(R.string.first_local_install),
                         enabled = !s.busy, compact = narrow,
@@ -174,53 +194,6 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
             modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
         )
     }
-    val (glasses, glassesSettings) = rememberGlasses()
-    val headset = glasses.present && glasses.canControl
-    val drop = rememberDropSheetState()
-    LaunchedEffect(headset) { if (!headset && (drop.open || drop.shown)) drop.reset() }
-    LiftHero(
-        key = "steam", tabs = tabs,
-        drop = drop.takeIf { headset },
-        overlay = { lifted ->
-            if (headset) DropSheet(
-                drop, glassesTabs(glasses), covered = lifted,
-                button = { enabled ->
-                    PrimaryButton(stringResource(R.string.games_play_steamvr), enabled = !s.busy && glasses.usable, large = true, icon = Icons.Filled.PlayArrow, fill = true,
-                        modifier = Modifier.fillMaxWidth().testTag("play-steamvr")) { if (enabled) { drop.open = false; a.onPlaySteamVr() } }
-                },
-            ) { tab ->
-                GlassesGroups(rememberMenuHost(), glasses, glassesSettings,
-                    onRecenter = GlassesMenuMirror::recenter, inSession = false, tab = tab)
-            }
-        },
-        onOpen = a.onSteamSettings, onPrimary = a.onPlay,
-        modifier = modifier.clipToBounds(),
-        start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
-        background = {
-            when {
-                games.isEmpty() -> EmptyLibrary(
-                    avoid = words,
-                    wall = if (owned.isEmpty() && featured.isEmpty()) null else { { CapsuleWall(emptyList(), owned = owned, featured = featured) } },
-                ) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
-                games.size < WALL_MIN_GAMES -> CapsuleFan(games)
-                else -> CapsuleWall(games, owned = owned, featured = featured)
-            }
-        },
-        scrim = { if (games.size >= WALL_MIN_GAMES) WallFade() },
-        words = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.onPlaced { words = it.boundsInParent() },
-            ) {
-                Wordmark(if (narrow) 30.dp else 40.dp)
-                if (s.busy || !s.ready || (s.available != null && s.available != s.installed)) RuntimeChip(s)
-            }
-        },
-        button = { click ->
-            PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, large = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.testTag("play-steam"), onClick = click)
-        },
-        rows = { tab -> a.modeSheet(mode, tab, extras) },
-    )
 }
 
 @Composable
