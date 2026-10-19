@@ -16,9 +16,11 @@ import java.util.concurrent.TimeUnit
  * long a 790 MB rootfs will take, and a mirror that answers a HEAD in 20 ms and then dribbles is
  * exactly the case that made this necessary.
  *
- * <p>The measurement is written back through [DownloadSource.remember], which is what makes the
- * report honest rather than decorative - the download that starts seconds later takes the order
- * the user was just shown, instead of measuring again and possibly disagreeing with itself.
+ * <p>The winner is written back through [DownloadSource.succeeded], which is what makes the
+ * report honest rather than decorative - the download that starts seconds later prefers the mirror
+ * the user was just shown as the fastest, instead of measuring again and possibly disagreeing with
+ * itself. (Upstream 0.5.0 replaced the fork's own ranking tables with that one call; the fork keeps
+ * its measurement, which weighs throughput rather than latency.)
  *
  * <p>The cost is the sample times the number of mirrors, once per test: a few megabytes against
  * the hundreds of megabytes the test exists to protect, and only on the two moments where a big
@@ -50,32 +52,31 @@ object MirrorTest {
      */
     @JvmStatic
     fun measure(url: String): List<Line> {
-        val mirrors = DownloadSource.mirrors()
+        val mirrors = DownloadSource.MIRRORS
         if (mirrors.isEmpty()) return emptyList()
-        // Bracket the run: a download that starts while this is in flight waits for the answer
-        // rather than probing a second time and possibly contradicting the report on screen.
-        DownloadSource.beginMeasure()
         val lines = try {
             val pool = Executors.newFixedThreadPool(mirrors.size)
             try {
                 pool.invokeAll(mirrors.map { mirror ->
-                    Callable { time(mirror.prefix + url) }
+                    Callable { time("https://${mirror.host}/$url") }
                 }).mapIndexed { index, future ->
                     val rate = try {
                         future.get(READ_TIMEOUT_MS + 2_000L, TimeUnit.MILLISECONDS)
                     } catch (e: Exception) {
                         -1L
                     }
-                    Line(mirrors[index].label, rate > 0, if (rate > 0) rate else 0L)
+                    Line(mirrors[index].host, rate > 0, if (rate > 0) rate else 0L)
                 }
             } finally {
                 pool.shutdownNow()
             }
-        } finally {
-            DownloadSource.endMeasure()
+        } catch (e: Exception) {
+            emptyList()
         }
         val ranked = lines.sortedByDescending { it.bytesPerSecond }
-        DownloadSource.remember(ranked.map { it.label })
+        // The next download prefers what was just measured: succeeded() is upstream's own hook for
+        // "this host answered", and its candidates() puts that host's proxy first.
+        ranked.firstOrNull { it.reachable }?.let { DownloadSource.succeeded("https://${it.label}/") }
         return ranked
     }
 

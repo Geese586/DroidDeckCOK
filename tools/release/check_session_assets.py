@@ -1,11 +1,20 @@
 """Reject an APK with missing or stale session helpers, including cached local bundles."""
 from pathlib import Path
 import hashlib
+import re
 import sys
 from zipfile import ZipFile
 
 
 OVERLAY = Path(__file__).resolve().parents[1] / 'linuxfs/overlay'
+SESSION_FILES = OVERLAY.parents[2] / 'app/src/main/java/com/droiddeck/launcher/session/SessionFiles.kt'
+
+
+def check_extraction(overlay, source):
+    deployed = set(re.findall(r'"(usr/local/bin/droiddeck-[^"]+)"\s+to\s+"\1"', source))
+    return ['not extracted at session start: ' + path.relative_to(overlay).as_posix()
+            for path in sorted((overlay / 'usr/local/bin').glob('droiddeck-*'))
+            if path.relative_to(overlay).as_posix() not in deployed]
 
 # What tools/build_local.sh produces and a plain checkout does not have: the cross-compiled glibc
 # preloads, proot itself, the compositor, the desktop helpers, the pinned downloads and the
@@ -46,6 +55,15 @@ NATIVE = (
     'assets/linuxfs/usr/local/lib/droiddeck-msitools/cabextract',
     'assets/linuxfs/usr/local/lib/droiddeck-msitools/7z',
     'assets/linuxfs/usr/local/lib/droiddeck-msitools/7z.so',
+    # 0.5.0's msitools set grew the three shared libraries msiinfo links against; the 0.4.0 fetch
+    # linked them statically. Without them the installer starts and dies on a missing soname.
+    'assets/linuxfs/usr/local/lib/droiddeck-msitools/libgsf-1.so.114',
+    'assets/linuxfs/usr/local/lib/droiddeck-msitools/libmsi-1.0.so.0',
+    # The x86-64 preload that makes scroll and text input reach the Windows web helper. Built by
+    # tools/linuxfs/build-x86-preloads.sh with the other guest preloads, so a plain checkout has it
+    # only if somebody remembered to lay the x86_64 set down; without it the client's store pages
+    # take no mouse wheel and no typing.
+    'assets/linuxfs/x86_64/libwebkitinput.so',
     # The helper that owns Android's output stream when the client or a game is put on the
     # DirectAudio relay. Its absence is silent in the same way: the relay part is added to the
     # session and then has no program to run.
@@ -56,6 +74,14 @@ NATIVE = (
     # Built by the Rust step, or taken prebuilt out of the release APK - either way it has to be
     # in the package.
     'lib/arm64-v8a/libdroiddeckstores.so',
+    # 0.5.0's VR runtime: the SteamVR driver, the Vulkan layer that routes its frames, and the
+    # Galaxy/Comet bridge the Steam Link style streaming path drives. All three are fetched or
+    # unpacked by tools/build_local.sh, none is in the source tree. Their absence is quiet in the
+    # way this list exists for: the VR button is offered, the session starts, and the compositor
+    # then finds no driver to load.
+    'assets/linuxfs/usr/local/lib/droiddeck-vr/droiddeck/bin/linuxarm64/driver_droiddeck.so',
+    'assets/linuxfs/usr/local/lib/droiddeck-vr/layer/libVkLayer_droiddeck_vr.so',
+    'assets/linuxfs/usr/local/lib/droiddeck-comet/comet',
 )
 
 # The daemon's sink modules ride inside the audio bundle, and CI compiles two of them in while it
@@ -66,7 +92,9 @@ NATIVE = (
 # up with "no output device" - while every other check here passes. Pin the bundle CI produces,
 # and unpack it to name what is missing when the pin does not match.
 PULSE_BUNDLE = 'assets/pulseaudio.tzst'
-PULSE_BUNDLE_SHA256 = '12fa999bcf35577d3799bbe7b13bb778d59c191a95778ff24715a5f65c0bd890'
+# Pinned to the bundle inside the 0.5.0 release APK (552509 bytes, 80 members). 0.4.0's was
+# 12fa999b…, 552469 bytes; the module set is unchanged, the daemon binary is not.
+PULSE_BUNDLE_SHA256 = '413e7ef287a768a3f06dbc5c08809c01012be8b70f765363d8072c9d4362fac0'
 PULSE_MODULES = (
     'modules/arm64/module-aaudio-sink.so',
     # Upstream renamed this one in 0.4.0 ("-native-", beside the tunnel/virtual sinks): the daemon
@@ -118,7 +146,7 @@ def source_assets(overlay=OVERLAY):
 
 
 def check(apk, overlay=OVERLAY):
-    errors = []
+    errors = check_extraction(overlay, SESSION_FILES.read_text()) if overlay == OVERLAY else []
     with ZipFile(apk) as package:
         present = {info.filename for info in package.infolist()}
         for source, asset in source_assets(overlay).items():

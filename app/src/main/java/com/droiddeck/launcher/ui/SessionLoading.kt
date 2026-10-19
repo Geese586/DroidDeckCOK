@@ -80,7 +80,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 
-// The session's loading screen, its paused screen and the HUD text style.
 
 @Composable
 fun HudText(text: String) {
@@ -139,7 +138,6 @@ private fun stageOf(topic: LoadingState.Topic, steam: Boolean): Int = when (topi
 @Composable
 fun LoadingOverlay(
     step: String, percent: Int, elapsed: String, hint: String, ended: Boolean,
-    /** What [step] is about, and whether it is a download or install line worth showing as it is (see [LoadingState]). */
     topic: LoadingState.Topic, readable: Boolean,
     /** How long the stage in [topic] has been running, so a long one can say more about itself. */
     stageSeconds: Int = 0,
@@ -160,13 +158,14 @@ fun LoadingOverlay(
     /** A tap on that list; null keeps the list off the screen (a session with no edge to choose). */
     onSteamPick: ((String) -> Unit)? = null,
     /** One headline per checklist stage, in the same order as the stages [steam] selects. */
-    titles: List<String>, steam: Boolean = true, onCancel: (() -> Unit)? = null,
+    titles: List<String>,
     /** An ended session's exit status and log path, shown small under the advice. */
+    title: String = stringResource(R.string.load_starting_steam),
+    steam: Boolean = true, onCancel: (() -> Unit)? = null,
     endedDetail: String? = null,
     onRetry: (() -> Unit)? = null,
     onShareLogs: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
-    /** The blue the page opens on when a button flooded to it, gathered into the throbber's ball. */
     flood: Color? = null,
     onFlooded: () -> Unit = {},
 ) {
@@ -194,7 +193,6 @@ fun LoadingOverlay(
     // hangs off this one flag, so the plain Play's screen stays the screen it always was.
     val advanced = !ended && steam && onSteamPick != null && steamChoices.isNotEmpty()
     val context = LocalContext.current
-    // The Steam tab's wall behind it, dimmed and slowed: starting Steam reads as the same place settling in.
     val games by produceState(emptyList<Library.SteamGame>()) {
         value = withContext(Dispatchers.IO) { runCatching { Library.steamGames(context).sortedByDescending { it.lastPlayed } }.getOrDefault(emptyList()) }
     }
@@ -222,7 +220,6 @@ fun LoadingOverlay(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.align(Alignment.Center).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
         ) {
-            // Held on the plain D while the flood gathers, and started fresh when it lands.
             key(flood == null) {
                 LogoThrobber(
                     Modifier.width(if (ended) 88.dp else 110.dp).onGloballyPositioned { ball = throbberBall(it.boundsInRoot()).also { b -> ThrobberSpot.ball = b } },
@@ -317,7 +314,6 @@ fun LoadingOverlay(
     }
 }
 
-/** What to do about an ended session: nothing leaves on a timer, and the pad starts on Try again. */
 @Composable
 private fun EndedActions(onRetry: (() -> Unit)?, onShareLogs: (() -> Unit)?, onClose: (() -> Unit)?) {
     val first = remember { FocusRequester() }
@@ -335,7 +331,6 @@ private fun EndedActions(onRetry: (() -> Unit)?, onShareLogs: (() -> Unit)?, onC
     }
 }
 
-/** One segment per stage: done ones filled, the current one filling (or running, with no percent). */
 @Composable
 private fun LoadSegments(count: Int, active: Int, percent: Int, modifier: Modifier = Modifier) {
     val pal = LocalPalette.current
@@ -363,7 +358,6 @@ private fun LoadSegments(count: Int, active: Int, percent: Int, modifier: Modifi
     }
 }
 
-/** Cancel as the pad's B, in the corner; a tap works too. */
 @Composable
 private fun CancelHint(onCancel: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
@@ -387,7 +381,6 @@ private fun CancelHint(onCancel: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-/** A session paused in the background, ready to pick up where it left off. */
 @Composable
 fun SessionPausedOverlay(title: String = stringResource(R.string.load_steam_paused), onResume: () -> Unit) {
     val colors = MaterialTheme.colorScheme

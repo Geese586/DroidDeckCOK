@@ -120,7 +120,6 @@ internal class ProtonMenu(
         }
     }
 
-    /** Looks for newer releases, at most every few hours (see ProtonExtras.checkLatest); quiet offline. */
     fun checkUpdates(force: Boolean = false) {
         if (!checking.compareAndSet(false, true)) return
         Thread({

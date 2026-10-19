@@ -1,6 +1,4 @@
 #!/bin/bash
-# Fetches the native arm64 Steam client from Valve's client-update CDN into ~/.local/share/Steam.
-# The client is not redistributable, so the runtime ships this script instead of the client.
 set -eu
 # Valve serves the same packages from more than one set of edge hosts, and both the speed and the
 # reachability of each are properties of the network the device is on rather than of the device. A
@@ -293,7 +291,31 @@ bl_size() {
 # trusted either way: the manifest still supplies every component's sha256 and it is still checked.
 local_dir=${BL_STEAM_LOCAL_DIR:-}
 local_only=${BL_STEAM_LOCAL_ONLY:-}
-steam_channel=${BL_STEAM_CHANNEL:-steamdeck_publicbeta}
+# Upstream 0.5.0's x86-64 client path calls this script as
+# `droiddeck-steam-install --sync steamdeck_publicbeta` to bring the arm64 parts up to date
+# before FEX starts the x86-64 client. A sync is exactly what BL_STEAM_SYNC=1 already means here
+# (read Valve's manifest, fetch only the components whose names changed), so the option only sets
+# the channel and that flag.
+sync_channel=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --sync) shift; sync_channel=${1:-steamdeck_publicbeta} ;;
+    --sync=*) sync_channel=${1#--sync=} ;;
+    "") ;;
+    *) echo "droiddeck-steam-install: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+if [ -n "$sync_channel" ]; then
+  BL_STEAM_SYNC=1
+  export BL_STEAM_SYNC
+fi
+# Upstream's own name for the same thing: non-empty means "this run is a sync, and this is the
+# channel it is syncing". Its later steps branch on it (the client's manifest record, in place of
+# the beta file), and the fork's branches on BL_STEAM_SYNC, so both are kept in step here rather
+# than one of them reading as an unset variable under `set -u`.
+sync=$sync_channel
+steam_channel=${sync_channel:-${BL_STEAM_CHANNEL:-steamdeck_publicbeta}}
 case "$steam_channel" in
   publicbeta|steamdeck_publicbeta) ;;
   *) echo "droiddeck-steam-install: unsupported Steam channel: $steam_channel" >&2; exit 1 ;;
@@ -507,7 +529,6 @@ while read -r block file size sum; do
   fi
   unzip -qo "$bl_zip" -d "$steam_root"
 done < "$work/parts"
-# Some entries are zipped with Windows separators; unzip keeps the backslash in the file name.
 find "$steam_root" -depth -name '*\\*' | while read -r odd; do
   fixed=${odd//\\//}
   mkdir -p "$(dirname "$fixed")"
@@ -517,20 +538,20 @@ find "$steam_root" -depth -name '*\\*' | while read -r odd; do
     mv -f "$odd" "$fixed"
   fi
 done
-echo "$steam_channel" > "$steam_root/package/beta"
+chmod -R a+x "$steam_root/steamrtarm64" "$steam_root/linuxarm64" 2>/dev/null || true
+if [ -n "$sync" ]; then
+  cp -f "$work/manifest" "$steam_root/package/$manifest.manifest"
+else
+  echo "$steam_channel" > "$steam_root/package/beta"
+fi
 ln -sfn "$steam_root/steamrtarm64" "$steam_root/steamrtarm32"
 chmod +x "$steam_root/steamrtarm64/steam" 2>/dev/null || true
-# What Valve's steam.sh sets up before it runs the client (it has no arm64 branch itself).
 mkdir -p "$HOME/.steam"
 ln -sfn "$steam_root" "$HOME/.steam/root"
 ln -sfn "$steam_root" "$HOME/.steam/steam"
 ln -sfn "$steam_root/steamrtarm64" "$HOME/.steam/bin64"
-ln -sfn "$steam_root/linuxarm64" "$HOME/.steam/sdk64"
-# The arm64 client runs every game through $HOME/.steam/sdkarm64/steam-launch-wrapper. Valve's
-# steam.sh has no arm64 branch to create it, and without it a launch dies in /bin/sh before Proton
-# is ever invoked - "No such file or directory", no Proton log, and the only other clue is an
-# unrelated-looking installscript assertion. Same target as sdk64; the client picks the name by
-# architecture.
+# sdk64 is where x86_64 Steamworks looks for steamclient.so; arm64 builds look in sdkarm64.
+ln -sfn "$steam_root/linux64" "$HOME/.steam/sdk64"
 ln -sfn "$steam_root/linuxarm64" "$HOME/.steam/sdkarm64"
 ln -sfn "$steam_root/steamrtarm64" "$HOME/.steam/binarm64"
 ln -sfn "$steam_root/linux32" "$HOME/.steam/sdk32"

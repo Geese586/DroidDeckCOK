@@ -6,9 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The two halves of the mirror report that are pure: how a rate is spelled, and how a measured
- * order is applied to the candidate list. Neither touches the network, so these run in
- * milliseconds - the measurement itself cannot be tested here, and does not need to be.
+ * The parts of the mirror report that are pure: how a rate is spelled, whether anything answered at
+ * all, and the accelerator table the report is measured over. None touches the network, so these
+ * run in milliseconds - the measurement itself cannot be tested here, and does not need to be.
+ *
+ * <p>Rewritten for 0.5.0, which brought upstream's own `DownloadSource` back: the fork's
+ * `inOrder()` / `mirrors()` helpers and their label-plus-prefix tables are gone with the engine
+ * they belonged to, and the ranking is now upstream's `succeeded()` hook (see [MirrorTest.measure],
+ * which calls it with the winner). What is still the fork's, and therefore still worth a test, is
+ * the table those measurements are taken over.
  */
 class MirrorTestTest {
 
@@ -38,43 +44,44 @@ class MirrorTestTest {
     }
 
     @Test
-    fun `a measured order moves the fastest mirror first and leaves the rest in place`() {
-        val candidates = listOf(
-            "https://gh-proxy.com/https://github.com/x/y",
-            "https://ghproxy.net/https://github.com/x/y",
-            "https://ghfile.geekertao.top/https://github.com/x/y",
-            "https://ghfast.top/https://github.com/x/y",
-            "https://github.com/x/y",
-        )
-        // What a user on a fast GitHub line measures: the direct fetch wins, an accelerator second.
-        val ordered = DownloadSource.inOrder(candidates, listOf("github.com", "ghproxy.net"))
-        assertEquals(listOf(
-            "https://github.com/x/y",
-            "https://ghproxy.net/https://github.com/x/y",
-            "https://gh-proxy.com/https://github.com/x/y",
-            "https://ghfile.geekertao.top/https://github.com/x/y",
-            "https://ghfast.top/https://github.com/x/y",
-        ), ordered)
+    fun `the measured table covers the forks accelerators once each`() {
+        val hosts = DownloadSource.MIRRORS.map { it.host }
+        assertEquals(hosts.size, hosts.distinct().size)
+        assertTrue(hosts.contains("gh-proxy.com"))
+        assertTrue(hosts.contains("ghproxy.net"))
+        // The fifth accelerator: surveyed from mainland China and answering, where ghfast.top did not.
+        assertTrue(hosts.contains("ghfile.geekertao.top"))
+        // The pick when nothing has been measured - mirror mode leads with this one.
+        assertEquals("gh-proxy.com", hosts.first())
     }
 
     @Test
-    fun `an order that names nothing leaves the candidate list alone`() {
-        val candidates = listOf(
-            "https://gh-proxy.com/https://github.com/x/y",
-            "https://github.com/x/y",
-        )
-        assertEquals(candidates, DownloadSource.inOrder(candidates, emptyList()))
-        assertEquals(candidates, DownloadSource.inOrder(candidates, listOf("example.invalid")))
+    fun `a mirror is measured through its own host and an api mirror may carry raw files only`() {
+        val api = DownloadSource.MIRRORS.filter { it.api }.map { it.host }
+        assertTrue(api.contains("gh-proxy.com"))
+        // ghproxy.net and the two smaller accelerators answer blobs, not the API's JSON.
+        assertFalse(api.contains("ghproxy.net"))
+        assertFalse(api.contains("ghfast.top"))
     }
 
     @Test
-    fun `mirrors names the accelerators and GitHub itself`() {
-        val labels = DownloadSource.mirrors().map { it.label }
-        assertEquals(labels.size, labels.distinct().size)
-        assertEquals("github.com", labels.last())
-        assertTrue(labels.contains("gh-proxy.com"))
-        assertTrue(labels.contains("ghproxy.net"))
-        // The direct entry is the empty prefix: what the report calls a fetch that bypassed them all.
-        assertEquals("", DownloadSource.mirrors().last().prefix)
+    fun `a catalog and the GitHub API are never sent through a mirror`() {
+        // Catalogs carry the digests everything else is checked against, so a mirror must not see one.
+        val catalog = "https://raw.githubusercontent.com/Droid-Deck/DroidDeck-CI/index.json"
+        assertTrue(DownloadSource.isCatalog(catalog))
+        assertEquals(listOf(catalog), DownloadSource.candidates(catalog))
+        val api = "https://api.github.com/repos/Droid-Deck/DroidDeck/releases"
+        assertEquals(listOf(api), DownloadSource.candidates(api))
+        // A URL on nobody's list is left exactly as it is.
+        assertEquals(listOf("https://example.invalid/x"), DownloadSource.candidates("https://example.invalid/x"))
+    }
+
+    @Test
+    fun `github hosts are recognised and everything else is not`() {
+        assertTrue(DownloadSource.isGithub("https://github.com/Droid-Deck/DroidDeck/releases/download/0.5.0/x.apk"))
+        assertTrue(DownloadSource.isGithub("https://raw.githubusercontent.com/a/b/c"))
+        assertTrue(DownloadSource.isGithub("https://api.github.com/repos/a/b"))
+        assertFalse(DownloadSource.isGithub("https://gh-proxy.com/https://github.com/a/b"))
+        assertFalse(DownloadSource.isGithub("https://github.com.evil.example/a/b"))
     }
 }

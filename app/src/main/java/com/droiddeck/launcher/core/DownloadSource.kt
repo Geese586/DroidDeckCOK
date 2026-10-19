@@ -1,311 +1,222 @@
 package com.droiddeck.launcher.core
 
 import android.content.Context
+import android.content.SharedPreferences
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
-/**
- * Where the app fetches the things that live on GitHub: the runtime catalog and the ~790 MB
- * rootfs beside it, the desktop catalog, Steam's seed, Proton builds, components and the app's
- * own updates. Every one of them is a github.com, raw.githubusercontent.com or api.github.com
- * URL, and from mainland China none of those answer - the fetch either times out or is reset.
- *
- * <p>The academic and vendor mirrors do not help, and this was measured rather than assumed:
- * mirrors.tuna.tsinghua.edu.cn/github-release, mirrors.aliyun.com, mirrors.cloud.tencent.com,
- * mirrors.ustc.edu.cn and mirror.nju.edu.cn all answer 404 for this project's repositories -
- * their github-release trees sync only the repositories on their own lists. mirrors.huaweicloud.com
- * answers 200 with an empty single-page-app shell for *any* path, which is not a mirror of
- * anything. TUNA, USTC, Aliyun and Tencent do carry Arch Linux ARM's package repository, which is
- * the runtime's base, but the runtime ships as one prebuilt tarball on GitHub, so their package
- * trees are not on this path either. What does work is a GitHub accelerator: a public HTTPS
- * endpoint that fetches the original URL on its own side and streams the bytes back through it,
- * which carries both raw.githubusercontent and the release assets.
- *
- * <p>Which accelerator is fastest is a property of the user's own network, not of this list - a
- * user on a 5 MB/s GitHub line has watched a download slow to 1 MB/s because it was routed through
- * an accelerator that was the right answer on somebody else's connection. So the order is not
- * trusted: [MirrorTest] measures every mirror on the device, [remember] keeps that measurement,
- * and [ranked] hands the download the measured order, fastest first. The Toast the test shows is
- * therefore the reason for the choice the download then makes - not a guess dressed up as one.
- *
- * <p>One honest limitation: the accelerators ignore a Range request and answer 200 with the whole
- * file, so a download through one cannot resume where it stopped - [Downloader] detects the 200
- * and starts the file again rather than corrupting it, and the sha256 still has to match before
- * anything is unpacked.
- */
 object DownloadSource {
-    /** Straight to GitHub, for a network that reaches it. */
-    const val OFFICIAL = "official"
+    const val MODE_AUTO = "auto"
+    const val MODE_DIRECT = "direct"
+    const val MODE_MIRROR = "mirror"
+    const val MODE_CUSTOM = "custom"
 
-    /** Through a GitHub accelerator, the default: most of this app's audience cannot reach GitHub. */
-    const val CHINA = "china"
+    private const val PREFS = "download-source"
+    private const val KEY_MODE = "mode"
+    private const val KEY_MIRROR = "mirror"
+    private const val KEY_CUSTOM = "custom"
+    private const val KEY_FASTEST = "fastest"
 
-    /**
-     * One way of reaching GitHub: the host a report names it by, and the prefix that turns an
-     * original URL into the one to fetch through it. GitHub itself is the empty prefix.
-     */
-    data class Mirror(val label: String, val prefix: String)
+    private const val PROBE = "https://raw.githubusercontent.com/Droid-Deck/DroidDeck/main/README.md"
+    private const val PROBE_TIMEOUT_MS = 4_000
+    private const val PROBE_COOLDOWN_MS = 30_000L
+    private const val UA = "DroidDeck-Android"
 
-    /**
-     * The accelerators, in the order they are tried before anything has been measured. The ones
-     * that answered when last surveyed come first, because the ones that did not cost a connect
-     * timeout every time they are reached; the direct URL is deliberately not in this list - it
-     * goes last, so an accelerator outage still installs.
-     */
-    private val ACCELERATORS = listOf(
-        "https://gh-proxy.com/",
-        "https://ghproxy.net/",
-        "https://ghfile.geekertao.top/",
-        // Did not answer when last surveyed (TLS handshake failure); kept last as a spare, since a
-        // mirror that comes back is one more chance at a fast install and costs nothing behind the
-        // three that do answer.
-        "https://ghfast.top/",
-    )
-
-    /** GitHub itself: what the report calls a fetch that went straight to the source. */
-    private val DIRECT = Mirror("github.com", "")
+    private val MODES = listOf(MODE_AUTO, MODE_DIRECT, MODE_MIRROR, MODE_CUSTOM)
 
     /**
-     * The hosts an accelerator carries. Anything else - Flathub, a game's own CDN, a driver
-     * vendor - is fetched directly whatever the source is set to.
+     * DroidDeckCOK: a fresh install starts on [MODE_MIRROR], not [MODE_AUTO]. Upstream's automatic
+     * mode tries GitHub itself first, which is right for the audience upstream ships to and wrong
+     * for this one: on a mainland network that first attempt is a connect timeout before any
+     * accelerator is reached. A user who does reach GitHub switches to Direct in Setup - the choice
+     * is remembered per install.
      */
-    private val GITHUB_HOSTS = setOf(
+    private const val DEFAULT_MODE = MODE_MIRROR
+
+    private val GITHUB_HOSTS = listOf(
         "github.com",
         "raw.githubusercontent.com",
         "api.github.com",
-        "objects.githubusercontent.com",
-        "codeload.github.com",
-        "gist.githubusercontent.com",
     )
 
-    private const val PREFS = "session"
-    private const val KEY = "downloadSource"
+    private val CATALOGS = listOf(
+        "https://raw.githubusercontent.com/Droid-Deck/DroidDeck-CI/",
+        "https://raw.githubusercontent.com/Droid-Deck/DroidDeck-Components/",
+    )
 
-    /** What one probe reads at most, and how long it may take: enough to rank, not enough to hurt. */
-    private const val PROBE_BYTES = 512 * 1024L
-    private const val PROBE_TIMEOUT_MS = 4_000L
-
-    /**
-     * How long a [MirrorTest] measurement stays good. Long enough to cover the download it was run
-     * for - the two moments the test runs are seconds away from one - and short enough that a
-     * network that has changed since is measured again rather than believed.
-     */
-    private const val ORDER_TTL_MS = 300_000L
-
-    /** Set once from App.onCreate; without it every URL resolves to its direct form. */
-    @Volatile
-    private var appContext: Context? = null
-
-    /** The hosts a [MirrorTest] measured, fastest first, and when it did. */
-    @Volatile
-    private var measuredOrder: List<String> = emptyList()
-
-    @Volatile
-    private var measuredAt = 0L
-
-    /** Set while a [MirrorTest] is running: see [awaitMeasurement] for why a download waits on it. */
-    @Volatile
-    private var measuring = false
-
-    private val measureLock = java.lang.Object()
+    data class Mirror(val host: String, val api: Boolean)
 
     /**
-     * How long a download will wait for a measurement already under way. Beyond the test's own
-     * timeouts plus a margin - a download that waits longer than that is waiting on a bug.
+     * DroidDeckCOK: `ghfile.geekertao.top` is added to upstream's four because it answered when the
+     * fork surveyed accelerators from mainland China. `ghfast.top` answered nothing in that survey
+     * and stays last, where it costs one connect timeout only after the others have been tried.
      */
-    private const val MEASURE_WAIT_MS = 20_000L
+    val MIRRORS = listOf(
+        Mirror("gh-proxy.com", true),
+        Mirror("gh-proxy.org", true),
+        Mirror("ghproxy.net", false),
+        Mirror("ghfile.geekertao.top", false),
+        Mirror("ghfast.top", false),
+    )
 
-    @JvmStatic
+    @Volatile
+    private var app: Context? = null
+
+    @Volatile
+    private var lastGood: String? = null
+
+    private val probing = AtomicBoolean(false)
+    private val probedAt = AtomicLong(0L)
+
     fun init(context: Context) {
-        appContext = context.applicationContext
+        app = context.applicationContext
+        lastGood = prefs()?.getString(KEY_FASTEST, null)
     }
 
-    /**
-     * [OFFICIAL] or [CHINA]. A fresh install defaults to [CHINA]: the audience is mainland
-     * devices, and from there the direct GitHub hosts answer slowly or not at all, while the
-     * accelerators answer first thing. A user who reaches GitHub fine switches back in Setup -
-     * the choice is remembered for the life of the install.
-     */
-    @JvmStatic
-    fun current(context: Context): String =
-        when (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)) {
-            OFFICIAL -> OFFICIAL
-            CHINA -> CHINA
-            // Never stored: new users start on the mainland mirror.
-            else -> CHINA
+    fun probe() {
+        if (app == null || prefs()?.getString(KEY_MODE, DEFAULT_MODE) == MODE_DIRECT) return
+        if (!probing.compareAndSet(false, true)) return
+        val now = System.currentTimeMillis()
+        if (now - probedAt.get() < PROBE_COOLDOWN_MS) {
+            probing.set(false)
+            return
         }
-
-    @JvmStatic
-    fun set(context: Context, source: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, if (source == CHINA) CHINA else OFFICIAL).apply()
-    }
-
-    /**
-     * Every mirror the app can fetch a GitHub URL through, GitHub itself last. The report names
-     * them by [Mirror.label]; the order is the fallback order, not the recommended one - that
-     * comes from measurement.
-     */
-    @JvmStatic
-    fun mirrors(): List<Mirror> =
-        ACCELERATORS.mapNotNull { prefix -> host(prefix)?.let { Mirror(it, prefix) } } + DIRECT
-
-    /**
-     * The URLs to try for [url], in order: every accelerator ahead of the original one, or just
-     * the original when the source is [OFFICIAL], the URL is not one an accelerator carries, or
-     * [init] has not run. The original comes last so an accelerator outage still installs.
-     */
-    @JvmStatic
-    fun candidates(url: String): List<String> {
-        if (url.isEmpty()) return listOf(url)
-        val context = appContext ?: return listOf(url)
-        if (current(context) != CHINA) return listOf(url)
-        if (host(url)?.let { it in GITHUB_HOSTS } != true) return listOf(url)
-        return mirrors().map { it.prefix + url }
-    }
-
-    /**
-     * [candidates] with the order settled by measurement rather than by the list: the order a
-     * [MirrorTest] has just measured if it is still fresh, otherwise every candidate probed in
-     * parallel (up to [PROBE_BYTES] in [PROBE_TIMEOUT_MS]) with the fastest that answered first and
-     * the silent ones last. This is what a big download runs before its first byte - a few seconds
-     * spent finding out which mirror actually answers from this network, instead of minutes
-     * watching the first one in the list sit at 0%. Small fetches stay on [candidates]: probing
-     * them costs more than the download.
-     */
-    @JvmStatic
-    fun ranked(url: String): List<String> {
-        val list = candidates(url)
-        if (list.size < 2) return list
-        // A measurement the user is watching is about to say which mirror is fastest. Waiting for
-        // it costs the seconds it is already taking and buys a download that takes the order that
-        // was reported - probing in parallel with it would race the report the user is reading.
-        awaitMeasurement()
-        freshOrder()?.let { order -> return inOrder(list, order) }
-        return byProbe(list)
-    }
-
-    /**
-     * Opens a measurement window. [MirrorTest] brackets its run with this pair so a download
-     * starting while the user is reading "testing mirror speed" waits for the answer rather than
-     * measuring a second time and possibly disagreeing with it.
-     */
-    @JvmStatic
-    fun beginMeasure() {
-        synchronized(measureLock) {
-            measuring = true
-        }
-    }
-
-    @JvmStatic
-    fun endMeasure() {
-        synchronized(measureLock) {
-            measuring = false
-            measureLock.notifyAll()
-        }
-    }
-
-    private fun awaitMeasurement() {
-        if (!measuring) return
-        synchronized(measureLock) {
-            val deadline = System.currentTimeMillis() + MEASURE_WAIT_MS
-            while (measuring && System.currentTimeMillis() < deadline) {
-                try {
-                    measureLock.wait(250L)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    return
+        probedAt.set(now)
+        Thread {
+            try {
+                val times = ConcurrentHashMap<String, Long>()
+                val sources = listOf<String?>(null) + MIRRORS.map { it.host }
+                val latch = CountDownLatch(sources.size)
+                for (mirror in sources) {
+                    Thread {
+                        try {
+                            val ms = latency(mirror?.let { "https://$it/$PROBE" } ?: PROBE)
+                            if (ms > 0) times[mirror ?: ""] = ms
+                        } finally {
+                            latch.countDown()
+                        }
+                    }.apply { isDaemon = true }.start()
                 }
+                latch.await(PROBE_TIMEOUT_MS * 3L, TimeUnit.MILLISECONDS)
+                val best = times.minByOrNull { it.value }?.key ?: return@Thread
+                lastGood = best
+                prefs()?.edit()?.putString(KEY_FASTEST, best)?.apply()
+            } finally {
+                probing.set(false)
             }
-        }
+        }.apply { isDaemon = true }.start()
     }
 
-    /**
-     * Records the order [MirrorTest] just measured, by host, fastest first. The next download
-     * takes it instead of probing again, so the mirror the user was shown as the fastest is the
-     * one the download actually uses.
-     */
-    @JvmStatic
-    fun remember(order: List<String>) {
-        if (order.isEmpty()) return
-        measuredOrder = order
-        measuredAt = System.currentTimeMillis()
-    }
-
-    /** Drops a measurement: what switching to the direct source does, so the next one re-measures. */
-    @JvmStatic
-    fun forget() {
-        measuredOrder = emptyList()
-        measuredAt = 0L
-    }
-
-    private fun freshOrder(): List<String>? =
-        if (measuredOrder.isEmpty() || System.currentTimeMillis() - measuredAt > ORDER_TTL_MS) null
-        else measuredOrder
-
-    /**
-     * [list] sorted the way [order] (hosts, best first) says; an unlisted host keeps its place.
-     * Internal rather than private so a unit test can pin the ordering without a network.
-     */
-    internal fun inOrder(list: List<String>, order: List<String>): List<String> {
-        val rank = order.withIndex().associate { (i, h) -> h to i }
-        return list.withIndex().sortedBy { (i, u) -> rank[host(u)] ?: (order.size + i) }
-            .map { it.value }
-    }
-
-    /** The measured order when nothing has measured one yet: probe every candidate in parallel. */
-    private fun byProbe(list: List<String>): List<String> {
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(list.size)
-        try {
-            val scored = pool.invokeAll(list.map { candidate ->
-                java.util.concurrent.Callable { candidate to probe(candidate) }
-            }).map { future ->
-                try {
-                    future.get(PROBE_TIMEOUT_MS + 1_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
-                } catch (e: Exception) {
-                    null
-                }
-            }.filterNotNull()
-            if (scored.isEmpty()) return list
-            val answered = scored.filter { it.second > 0 }.sortedByDescending { it.second }
-            val silent = scored.filter { it.second <= 0 }
-            return (answered + silent).map { it.first }
-        } finally {
-            pool.shutdownNow()
-        }
-    }
-
-    /** Throughput of [url] over up to [PROBE_BYTES], B/s; negative when nothing came down. */
-    private fun probe(url: String): Double {
-        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-        var bytes = 0L
-        val start = System.nanoTime()
-        try {
-            connection.connectTimeout = 5_000
-            connection.readTimeout = PROBE_TIMEOUT_MS.toInt()
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", "DroidDeck-Android")
-            // GET, not HEAD: an accelerator may not answer a HEAD at all. A server that ignores
-            // the range just streams the whole file, and the deadline below caps what is read.
-            connection.setRequestProperty("Range", "bytes=0-${PROBE_BYTES - 1}")
-            if (connection.responseCode / 100 != 2) return -1.0
-            val deadline = start + PROBE_TIMEOUT_MS * 1_000_000L
-            connection.inputStream.use { input ->
-                val buffer = ByteArray(1 shl 16)
-                while (System.nanoTime() < deadline) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    bytes += read
-                    if (bytes >= PROBE_BYTES) break
-                }
+    private fun latency(url: String): Long {
+        val started = System.nanoTime()
+        var connection: HttpURLConnection? = null
+        return try {
+            val c = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = PROBE_TIMEOUT_MS
+                readTimeout = PROBE_TIMEOUT_MS
+                instanceFollowRedirects = true
+                setRequestProperty("Range", "bytes=0-1023")
+                setRequestProperty("User-Agent", UA)
+            }
+            connection = c
+            if (c.responseCode / 100 != 2) 0L else {
+                c.inputStream.use { it.read() }
+                (System.nanoTime() - started) / 1_000_000
             }
         } catch (e: Exception) {
-            return if (bytes > 0) bytes / ((System.nanoTime() - start) / 1e9) else -1.0
+            0L
         } finally {
-            connection.disconnect()
+            runCatching { connection?.disconnect() }
         }
-        val seconds = (System.nanoTime() - start) / 1e9
-        return if (bytes > 0 && seconds > 0) bytes / seconds else -1.0
     }
 
-    private fun host(url: String): String? =
-        runCatching { java.net.URI(url).host?.lowercase() }.getOrNull()
+    fun isGithub(url: String): Boolean = GITHUB_HOSTS.any { url.startsWith("https://$it/") }
+
+    /** Catalogs carry the digests everything else is checked against, so a mirror must never supply one. */
+    fun isCatalog(url: String): Boolean = CATALOGS.any { url.startsWith(it) }
+
+    fun candidates(target: String): List<String> {
+        // GitHub API metadata carries executable URLs and digests; never proxy it.
+        if (isCatalog(target) || target.startsWith("https://api.github.com/")) return listOf(target)
+        val prefs = prefs() ?: return listOf(target)
+        if (!isGithub(target)) return listOf(target)
+        val api = target.startsWith("https://api.github.com/")
+        val proxies = MIRRORS.filter { !api || it.api }.map { it.proxy(target) }
+        val ordered = when (prefs.getString(KEY_MODE, DEFAULT_MODE) ?: DEFAULT_MODE) {
+            MODE_DIRECT -> listOf(target)
+            MODE_MIRROR -> listOfNotNull(picked(prefs, api)?.proxy(target)) + listOf(target) + quickest(proxies)
+            MODE_CUSTOM -> listOfNotNull(customProxy(prefs, target)) + listOf(target) + quickest(proxies)
+            else -> if (api) listOf(target) else listOf(target) + quickest(proxies)
+        }
+        return ordered.distinct()
+    }
+
+    private fun quickest(sources: List<String>): List<String> =
+        sources.sortedBy { if (host(it) == lastGood) 0 else 1 }
+
+    fun succeeded(source: String) {
+        lastGood = host(source)
+    }
+
+    fun failed() {
+        lastGood = null
+        prefs()?.edit()?.remove(KEY_FASTEST)?.apply()
+    }
+
+    fun mode(context: Context): String = prefs(context)?.getString(KEY_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
+
+    fun setMode(context: Context, mode: String) {
+        prefs(context)?.edit()?.putString(KEY_MODE, mode.takeIf { it in MODES } ?: DEFAULT_MODE)?.apply()
+    }
+
+    fun mirror(context: Context): String {
+        val host = prefs(context)?.getString(KEY_MIRROR, "") ?: ""
+        return MIRRORS.firstOrNull { it.host == host }?.host ?: MIRRORS.first().host
+    }
+
+    fun setMirror(context: Context, host: String) {
+        prefs(context)?.edit()?.putString(KEY_MIRROR, host.takeIf { h -> MIRRORS.any { it.host == h } } ?: "")?.apply()
+    }
+
+    fun custom(context: Context): String = prefs(context)?.getString(KEY_CUSTOM, "") ?: ""
+
+    fun setCustom(context: Context, prefix: String) {
+        prefs(context)?.edit()?.putString(KEY_CUSTOM, normalizePrefix(prefix))?.apply()
+    }
+
+    fun reset(context: Context) {
+        lastGood = null
+        prefs(context)?.edit()?.clear()?.apply()
+    }
+
+    private fun prefs(): SharedPreferences? = app?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun prefs(context: Context): SharedPreferences? =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun Mirror.proxy(target: String): String = "https://$host/$target"
+
+    private fun host(url: String): String =
+        MIRRORS.firstOrNull { url.startsWith("https://${it.host}/") }?.host ?: ""
+
+    private fun picked(prefs: SharedPreferences, api: Boolean): Mirror? {
+        val chosen = MIRRORS.firstOrNull { it.host == (prefs.getString(KEY_MIRROR, "") ?: "") } ?: MIRRORS.firstOrNull()
+        return if (api && chosen != null && !chosen.api) MIRRORS.firstOrNull { it.api } else chosen
+    }
+
+    private fun custom(prefs: SharedPreferences): String = prefs.getString(KEY_CUSTOM, "") ?: ""
+
+    private fun customProxy(prefs: SharedPreferences, target: String): String? =
+        normalizePrefix(custom(prefs)).takeIf { it.isNotEmpty() }?.let { "$it/$target" }
+
+    private fun normalizePrefix(value: String): String {
+        val trimmed = value.trim().trimEnd('/')
+        if (trimmed.isEmpty() || trimmed.startsWith("http://")) return ""
+        return if (trimmed.startsWith("https://")) trimmed else "https://$trimmed"
+    }
 }

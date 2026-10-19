@@ -26,10 +26,8 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
     var visible by mutableStateOf(true)
     var step by mutableStateOf(context.getString(com.droiddeck.launcher.R.string.loadstate_starting))
         private set
-    /** What [step] is about, so the screen picks its checklist stage without reading the (translated) words. */
     var topic by mutableStateOf(Topic.SESSION)
         private set
-    /** [step] is a download or install line worth showing as it is, not one of the script's own notes. */
     var readable by mutableStateOf(false)
         private set
     var percent by mutableIntStateOf(-1)
@@ -72,10 +70,8 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
     var elapsed by mutableStateOf("")
     var hint by mutableStateOf("")
     var ended by mutableStateOf(false)
-    /** The technical side of an ended session (exit status, log path), under the advice in [step]. */
     var endedDetail by mutableStateOf<String?>(null)
 
-    // The desktop and the emulators get their own: the Steam ones talk about Steam.
     private val hints = context.resources.getStringArray(
         if (steam) com.droiddeck.launcher.R.array.loading_hints else com.droiddeck.launcher.R.array.loading_hints_desktop,
     )
@@ -186,7 +182,6 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
         hint = hints[((seconds / 8) % hints.size).toInt()]
     }
 
-    /** A line the app itself writes (an install's progress, the session starting). */
     fun say(line: String, topic: Topic, readable: Boolean) {
         step = line
         this.topic = topic
@@ -209,7 +204,6 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
         endedDetail = detail
     }
 
-    /** Re-reads the end of the log and updates the line and the bar. */
     fun update(context: Context, log: File?) {
         val state = read(context, log) ?: return
         step = state.line
@@ -289,7 +283,6 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
         }
     }
 
-    /** Only the tail is read: the client alone writes megabytes an hour. */
     private fun read(context: Context, log: File?): Line? {
         if (log == null || !log.isFile) return last
         val (start, text) = tail(log) ?: return last
@@ -508,14 +501,9 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
         return if (line.startsWith("[") && close in 1..32) line.substring(close + 2) else line
     }
 
-    /** The checklist stages a loading line can move the screen to. */
     enum class Topic { RUNTIME, SESSION, DESKTOP, STEAM, STEAM_STARTING, OTHER }
 
     companion object {
-        /**
-         * A session script "== STEP" line's topic in a Steam ([steam]) or desktop session; those
-         * lines are English whatever the app's language.
-         */
         internal fun topicOf(scriptStep: String, steam: Boolean): Topic {
             val t = scriptStep.lowercase()
             return when {
@@ -528,7 +516,6 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
             }
         }
 
-        /** The script's install lines are worth reading as they are; its other notes are not. */
         internal fun readableScriptStep(scriptStep: String): Boolean {
             val t = scriptStep.lowercase()
             return t.startsWith("download") || t.startsWith("checking the linux") || t.startsWith("unpacking") || t.startsWith("installing")

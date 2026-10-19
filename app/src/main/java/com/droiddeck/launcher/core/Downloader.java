@@ -6,144 +6,95 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Properties;
 
-/**
- * The fetches this app makes: the runtime catalog (a few hundred bytes of JSON) and the runtime
- * tarball itself (~790 MB), plus every other GitHub-hosted thing it installs. Plain
- * HttpURLConnection - nothing here needs a client library, and one fewer dependency is one fewer
- * thing that can fail a release build.
- *
- * <p>Each URL is resolved through {@link DownloadSource} first, so a network that cannot reach
- * GitHub gets the accelerators ahead of it. The direct URL is always the last candidate, so an
- * accelerator outage falls back to GitHub rather than failing the install.
- */
 public final class Downloader {
     private static final String TAG = "Downloader";
-    /** A stalled transfer is worth waiting out; a host that never answers is not. */
+    // DroidDeckCOK: 15s, not upstream's 10. A GitHub front end reached from mainland China can take
+    // longer than ten seconds to complete TLS, and this budget buys nothing else - it only decides
+    // how long one candidate gets before the next one is tried.
     private static final int CONNECT_TIMEOUT_MS = 15_000;
-    private static final int READ_TIMEOUT_MS = 30_000;
+    private static final int STALL_TIMEOUT_MS = 15_000;
+    private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
 
     private Downloader() {}
 
     public static String downloadString(String url) {
-        for (String candidate : DownloadSource.candidates(url)) {
-            String body = downloadStringOnce(candidate);
-            if (body != null) return body;
+        List<String> sources = DownloadSource.INSTANCE.candidates(url);
+        for (int i = 0; i < sources.size(); i++) {
+            if (i > 0) Log.i(TAG, "retrying " + url + " via " + sources.get(i));
+            Fetch fetch = fetch(sources.get(i));
+            if (fetch.body != null) {
+                DownloadSource.INSTANCE.succeeded(sources.get(i));
+                return fetch.body;
+            }
+            if (fetch.fatal && sources.get(i).equals(url)) return null;
         }
+        DownloadSource.INSTANCE.failed();
         return null;
     }
 
-    private static String downloadStringOnce(String url) {
-        HttpURLConnection connection = null;
-        try {
-            connection = open(url);
-            if (connection.getResponseCode() / 100 != 2) {
-                Log.w(TAG, url + " -> HTTP " + connection.getResponseCode());
-                return null;
-            }
-            try (InputStream in = connection.getInputStream();
-                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                FileUtils.copy(in, out);
-                return new String(out.toByteArray(), StandardCharsets.UTF_8);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "GET " + url, e);
-            return null;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
+    /** Fetches without the mirror list, for a URL whose body is a digest the payload is checked against. */
+    public static String downloadDirect(String url) {
+        return fetch(url).body;
+    }
+
+    public static boolean downloadFile(String url, File destination, boolean resume,
+                                       java.util.function.Consumer<Float> progress) {
+        return downloadFile(url, destination, resume, null, progress);
+    }
+
+    /** Verify each candidate before accepting it, so a bad mirror can fall back. */
+    public static boolean downloadFile(String url, File destination, boolean resume, String expectedSha256,
+                                       java.util.function.Consumer<Float> progress) {
+        if (expectedSha256 != null && !expectedSha256.matches("(?i)[0-9a-f]{64}"))
+            throw new IllegalArgumentException("Expected SHA-256 must be 64 hex characters");
+        return downloadCandidates(url, DownloadSource.INSTANCE.candidates(url), destination, resume, expectedSha256, progress);
     }
 
     /**
-     * Downloads to {@code destination}, reporting a 0..1 fraction (or -1 when the server sends no
-     * length). {@code resume} continues a partial file with a Range request, which is what makes a
-     * 790 MB download survive a dropped connection instead of starting over.
+     * DroidDeckCOK: the same walk over the candidates, but the callback is also told which one the
+     * bytes are coming from. The loading screen names the mirror it is reading from (a slot the
+     * runtime's own download has always had, and which the fork gives every other GitHub fetch), and
+     * this is where that name comes from: the -1 fraction arrives the moment a candidate starts, so
+     * the line is up before the first byte moves.
      *
-     * <p>The candidates are tried in the order {@link DownloadSource#ranked} puts them - measured
-     * speed, fastest first - and {@code progress} is told which one is being read: its first
-     * argument is the candidate's host, arriving with a -1 fraction the moment a candidate starts
-     * (the "which mirror is this?" line before any byte moves) and riding along with every
-     * progress hop after that.
+     * <p>Named apart from [downloadFile] rather than overloaded onto it: upstream already has a
+     * two-argument-per-callback shape of its own, and a caller passing `null` for "no progress"
+     * matches either of them, which is an ambiguity that only shows up when somebody writes a test.
      */
-    public static boolean downloadFile(String url, File destination, boolean resume,
-                                       java.util.function.Consumer<Float> progress) {
-        return downloadFile(url, destination, resume, (source, fraction) -> {
-            if (progress != null) progress.accept(fraction);
-        });
+    public static boolean downloadFileFrom(String url, File destination, boolean resume,
+                                           java.util.function.BiConsumer<String, Float> progress) {
+        return downloadFileFrom(url, destination, resume, null, progress);
     }
 
-    public static boolean downloadFile(String url, File destination, boolean resume,
-                                       java.util.function.BiConsumer<String, Float> progress) {
-        // Ranked only when resuming is on the table - the installs that move hundreds of
-        // megabytes. A thumbnail or a plugin loader would spend longer being probed than fetched.
-        List<String> candidates = resume ? DownloadSource.ranked(url) : DownloadSource.candidates(url);
-        for (int i = 0; i < candidates.size(); i++) {
-            if (progress != null) progress.accept(host(candidates.get(i)), -1f);
-            if (downloadFileOnce(candidates.get(i), destination, resume, progress)) return true;
+    /** [downloadFileFrom] with each candidate checked against [expectedSha256] before it is kept. */
+    public static boolean downloadFileFrom(String url, File destination, boolean resume, String expectedSha256,
+                                           java.util.function.BiConsumer<String, Float> progress) {
+        List<String> sources = DownloadSource.INSTANCE.candidates(url);
+        for (int i = 0; i < sources.size(); i++) {
+            String source = sources.get(i);
+            final String named = host(source);
+            if (progress != null) progress.accept(named, -1f);
+            java.util.function.Consumer<Float> inner = fraction -> {
+                if (progress != null) progress.accept(named, fraction);
+            };
+            if (downloadCandidates(url, java.util.Collections.singletonList(source), destination, resume,
+                    expectedSha256, inner)) return true;
         }
+        DownloadSource.INSTANCE.failed();
         return false;
     }
 
-    private static boolean downloadFileOnce(String url, File destination, boolean resume,
-                                            java.util.function.BiConsumer<String, Float> progress) {
-        HttpURLConnection connection = null;
-        long have = resume && destination.isFile() ? destination.length() : 0;
-        String source = host(url);
-        try {
-            connection = open(url);
-            if (have > 0) connection.setRequestProperty("Range", "bytes=" + have + "-");
-            int code = connection.getResponseCode();
-            boolean appending = code == HttpURLConnection.HTTP_PARTIAL;
-            if (code / 100 != 2) {
-                // The server ignored or refused the range: start the file again.
-                if (have > 0) {
-                    connection.disconnect();
-                    //noinspection ResultOfMethodCallIgnored
-                    destination.delete();
-                    return downloadFileOnce(url, destination, false, progress);
-                }
-                Log.w(TAG, url + " -> HTTP " + code);
-                return false;
-            }
-            if (!appending) have = 0;
-            long length = connection.getContentLengthLong();
-            long total = length < 0 ? -1 : length + have;
-            File parent = destination.getParentFile();
-            if (parent != null && !parent.isDirectory()) //noinspection ResultOfMethodCallIgnored
-                parent.mkdirs();
-            long written = have;
-            try (InputStream in = new BufferedInputStream(connection.getInputStream(), 1 << 16);
-                 OutputStream out = new FileOutputStream(destination, appending)) {
-                byte[] buffer = new byte[1 << 16];
-                long lastReport = 0;
-                for (int read = in.read(buffer); read > 0; read = in.read(buffer)) {
-                    out.write(buffer, 0, read);
-                    written += read;
-                    // A callback per 64 KB would be tens of thousands of UI hops; once per MB is
-                    // enough to move a progress bar smoothly.
-                    if (progress != null && written - lastReport > (1 << 20)) {
-                        lastReport = written;
-                        progress.accept(source, total > 0 ? written / (float) total : -1f);
-                    }
-                }
-            }
-            if (progress != null) progress.accept(source, 1f);
-            return total <= 0 || written >= total;
-        } catch (Exception e) {
-            Log.w(TAG, "download " + url, e);
-            return false;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
-    }
-
-    /** The candidate's host, for the progress line: which mirror this download is on. */
+    /** The candidate's host, for that progress line: which mirror this download is on. */
     public static String host(String url) {
         try {
             String host = new URL(url).getHost();
@@ -152,10 +103,224 @@ public final class Downloader {
         return url;
     }
 
-    private static HttpURLConnection open(String url) throws java.io.IOException {
+    // Package-private for the local multi-source HTTP test.
+    static boolean downloadCandidates(String original, List<String> sources, File destination, boolean resume,
+                                      String expectedSha256, java.util.function.Consumer<Float> progress) {
+        Identity identity = loadIdentity(destination, resume, expectedSha256);
+        for (int i = 0; i < sources.size(); i++) {
+            String source = sources.get(i);
+            if (i > 0) Log.i(TAG, "retrying " + original + " via " + source);
+            Outcome outcome = attempt(source, destination, resume, identity, expectedSha256, progress);
+            if (outcome == Outcome.DONE) {
+                if (expectedSha256 != null && !expectedSha256.equalsIgnoreCase(Hashes.sha256(destination))) {
+                    Log.w(TAG, "checksum mismatch from " + source + "; trying another source");
+                    if (!discardPartial(destination, identity)) return false;
+                    continue;
+                }
+                resumeFile(destination).delete();
+                DownloadSource.INSTANCE.succeeded(source);
+                if (progress != null) progress.accept(1f);
+                return true;
+            }
+            if (outcome == Outcome.FATAL && source.equals(original)) return false;
+        }
+        DownloadSource.INSTANCE.failed();
+        return false;
+    }
+
+    private enum Outcome { DONE, RETRY, FATAL }
+
+    private static final class Identity {
+        private String source;
+        private String etag;
+    }
+
+    private static File resumeFile(File dest) {
+        return new File(dest.getPath() + ".resume.properties");
+    }
+
+    private static boolean strongETag(String value) {
+        return value != null && !value.isEmpty() && !value.startsWith("W/");
+    }
+
+    /** Only reuse saved bytes when we persisted a strong validator and their source. */
+    private static Identity loadIdentity(File dest, boolean resume, String expectedSha256) {
+        Identity identity = new Identity();
+        File marker = resumeFile(dest);
+        if (!resume || !dest.isFile() || dest.length() == 0) {
+            marker.delete();
+            return identity;
+        }
+        try (FileInputStream in = new FileInputStream(marker)) {
+            Properties p = new Properties();
+            p.load(in);
+            String source = p.getProperty("source");
+            String etag = p.getProperty("etag");
+            String expected = p.getProperty("sha256", "");
+            if (source != null && source.startsWith("http") && strongETag(etag)
+                    && expected.equals(expectedSha256 == null ? "" : expectedSha256.toLowerCase(java.util.Locale.ROOT))) {
+                identity.source = source;
+                identity.etag = etag;
+                return identity;
+            }
+        } catch (IOException e) {
+            // Legacy partials or interrupted metadata writes have no trustworthy identity.
+        }
+        if (!discardPartial(dest, identity)) Log.w(TAG, "could not discard unidentified partial " + dest);
+        return identity;
+    }
+
+    private static boolean discardPartial(File dest, Identity identity) {
+        identity.source = null;
+        identity.etag = null;
+        File marker = resumeFile(dest);
+        return (!dest.exists() || dest.delete()) && (!marker.exists() || marker.delete());
+    }
+
+    private static void saveIdentity(File dest, Identity identity, String expectedSha256) {
+        File marker = resumeFile(dest);
+        if (!strongETag(identity.etag)) {
+            marker.delete();
+            return;
+        }
+        Properties p = new Properties();
+        p.setProperty("source", identity.source);
+        p.setProperty("etag", identity.etag);
+        p.setProperty("sha256", expectedSha256 == null ? "" : expectedSha256.toLowerCase(java.util.Locale.ROOT));
+        try (FileOutputStream out = new FileOutputStream(marker)) {
+            p.store(out, "DroidDeck partial download validator");
+        } catch (IOException e) {
+            marker.delete(); // No valid metadata means no future resume.
+            Log.w(TAG, "cannot persist download validator", e);
+        }
+    }
+
+    private static Outcome attempt(String url, File destination, boolean resume, Identity identity,
+                                   String expectedSha256, java.util.function.Consumer<Float> progress) {
+        HttpURLConnection connection = null;
+        long have = resume && destination.isFile() ? destination.length() : 0;
+        try {
+            if (have > 0 && (!url.equals(identity.source) || !strongETag(identity.etag))) {
+                // A new source or unvalidated bytes must restart from byte zero.
+                if (!discardPartial(destination, identity)) return Outcome.RETRY;
+                have = 0;
+            }
+            connection = open(url, STALL_TIMEOUT_MS);
+            if (have > 0) {
+                connection.setRequestProperty("Range", "bytes=" + have + "-");
+                connection.setRequestProperty("If-Range", identity.etag);
+            }
+            int code = connection.getResponseCode();
+            if (have > 0 && code == HTTP_RANGE_NOT_SATISFIABLE) {
+                connection.disconnect();
+                if (!discardPartial(destination, identity)) return Outcome.RETRY;
+                return attempt(url, destination, false, identity, expectedSha256, progress);
+            }
+            if (code / 100 != 2) {
+                Log.w(TAG, url + " -> HTTP " + code);
+                return code == HttpURLConnection.HTTP_NOT_FOUND || code == HttpURLConnection.HTTP_GONE
+                        ? Outcome.FATAL : Outcome.RETRY;
+            }
+            boolean appending = code == HttpURLConnection.HTTP_PARTIAL;
+            if (appending && !rangeStartsAt(connection.getHeaderField("Content-Range"), have)) {
+                connection.disconnect();
+                if (!discardPartial(destination, identity)) return Outcome.RETRY;
+                return attempt(url, destination, false, identity, expectedSha256, progress);
+            }
+            String etag = connection.getHeaderField("ETag");
+            if (have > 0 && appending && (!strongETag(etag) || !etag.equals(identity.etag))) {
+                connection.disconnect();
+                if (!discardPartial(destination, identity)) return Outcome.RETRY;
+                return attempt(url, destination, false, identity, expectedSha256, progress);
+            }
+            if (!appending && have > 0) {
+                // If-Range may legitimately return full 200 when representation changed.
+                if (!discardPartial(destination, identity)) return Outcome.RETRY;
+                have = 0;
+            }
+            if (!appending) have = 0;
+            long length = connection.getContentLengthLong();
+            long total = appending ? rangeTotal(connection.getHeaderField("Content-Range")) : -1;
+            if (total < 0) total = length < 0 ? -1 : length + have;
+            File parent = destination.getParentFile();
+            if (parent != null && !parent.isDirectory()) parent.mkdirs();
+            identity.source = url;
+            identity.etag = strongETag(etag) ? etag : null;
+            saveIdentity(destination, identity, expectedSha256);
+            long written = have;
+            try (InputStream in = new BufferedInputStream(connection.getInputStream(), 1 << 16);
+                 OutputStream out = new FileOutputStream(destination, appending)) {
+                byte[] buffer = new byte[1 << 16];
+                long lastReport = 0;
+                for (int read = in.read(buffer); read > 0; read = in.read(buffer)) {
+                    out.write(buffer, 0, read);
+                    written += read;
+                    if (progress != null && written - lastReport > (1 << 20)) {
+                        lastReport = written;
+                        progress.accept(total > 0 ? written / (float) total : -1f);
+                    }
+                }
+            }
+            if (total > 0 && written < total) return Outcome.RETRY;
+            return Outcome.DONE;
+        } catch (Exception e) {
+            Log.w(TAG, "download " + url, e);
+            return Outcome.RETRY;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    /** True when a `Content-Range: bytes START-END/TOTAL` header starts exactly at {@code start}. */
+    static boolean rangeStartsAt(String contentRange, long start) {
+        if (contentRange == null) return false;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^\\s*bytes\\s+(\\d+)-\\d+/(?:\\d+|\\*)\\s*$").matcher(contentRange);
+        return m.matches() && Long.parseLong(m.group(1)) == start;
+    }
+
+    /** The complete length in a `Content-Range` header, or -1 when the header leaves it unknown. */
+    static long rangeTotal(String contentRange) {
+        if (contentRange == null) return -1;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^\\s*bytes\\s+\\d+-\\d+/(\\d+)\\s*$").matcher(contentRange);
+        return m.matches() ? Long.parseLong(m.group(1)) : -1;
+    }
+
+    private static final class Fetch {
+        final String body;
+        final boolean fatal;
+
+        Fetch(String body, boolean fatal) {
+            this.body = body;
+            this.fatal = fatal;
+        }
+    }
+
+    private static Fetch fetch(String url) {
+        HttpURLConnection connection = null;
+        try {
+            connection = open(url, STALL_TIMEOUT_MS);
+            int code = connection.getResponseCode();
+            if (code / 100 != 2) {
+                Log.w(TAG, url + " -> HTTP " + code);
+                return new Fetch(null, code == HttpURLConnection.HTTP_NOT_FOUND || code == HttpURLConnection.HTTP_GONE);
+            }
+            try (InputStream in = connection.getInputStream();
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                FileUtils.copy(in, out);
+                return new Fetch(new String(out.toByteArray(), StandardCharsets.UTF_8), false);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "GET " + url, e);
+            return new Fetch(null, false);
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private static HttpURLConnection open(String url, int readTimeoutMs) throws java.io.IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        connection.setReadTimeout(READ_TIMEOUT_MS);
+        connection.setReadTimeout(readTimeoutMs);
         connection.setInstanceFollowRedirects(true);
         connection.setRequestProperty("User-Agent", "DroidDeck-Android");
         return connection;
