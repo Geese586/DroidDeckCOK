@@ -83,7 +83,18 @@ internal fun GamesPage(s: FrontEndState, a: FrontEndActions, selected: String, o
             Rise(0) { PageHeader(stringResource(R.string.content_games)) { onAdd?.let { AddGameButton(it) } } }
             Rise(1) { Note(stringResource(if (s.shortcutPicker && s.shortcutLibraryScanning) R.string.game_shortcut_scanning else R.string.games_empty)) }
             if (!s.shortcutPicker) Rise(2) {
-                Actions { PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.padding(top = 12.dp).testTag("play-steam"), onClick = a.onPlay) }
+                // Play as it always was, and beside it the same session with the client's edge menu
+                // on its loading screen - the Games tab's way to the same choice the Steam tab
+                // offers. Nothing is timed first.
+                Actions {
+                    PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.padding(top = 12.dp).testTag("play-steam"), onClick = a.onPlay)
+                    SecondaryButton(
+                        stringResource(R.string.games_play_steam_advanced),
+                        enabled = !s.busy,
+                        modifier = Modifier.padding(top = 12.dp).testTag("play-steam-advanced"),
+                        onClick = a.onPlayMeasured,
+                    )
+                }
             }
             GameFileFolderActions(s, a)
         }

@@ -18,6 +18,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import com.droiddeck.launcher.frontend.Library
 import com.droiddeck.launcher.session.LoadingState
+import com.droiddeck.launcher.session.SteamCdn
+import com.droiddeck.launcher.session.SteamCdnProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -58,6 +60,8 @@ import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.getValue
@@ -139,6 +143,22 @@ fun LoadingOverlay(
     topic: LoadingState.Topic, readable: Boolean,
     /** How long the stage in [topic] has been running, so a long one can say more about itself. */
     stageSeconds: Int = 0,
+    /** The host a running download is coming from, empty when nothing is downloading (see [LoadingState]). */
+    source: String = "",
+    /** The Steam client's line ranking as measured for this session, empty when it was not measured. */
+    steamLine: String = "",
+    /** How fast the running Steam download is arriving, empty when nothing is downloading. */
+    speed: String = "",
+    /**
+     * The edges the line test ranked for this session, fastest first (SteamCdn's values). The list
+     * the screen offers is these plus "automatic" - the client-update chain has exactly two edges,
+     * so three rows is all of it and not a sample of something longer.
+     */
+    steamChoices: List<String> = emptyList(),
+    /** The edge asked for right now: a value from [steamChoices], or empty for automatic. */
+    steamPick: String = "",
+    /** A tap on that list; null keeps the list off the screen (a session with no edge to choose). */
+    onSteamPick: ((String) -> Unit)? = null,
     /** One headline per checklist stage, in the same order as the stages [steam] selects. */
     titles: List<String>, steam: Boolean = true, onCancel: (() -> Unit)? = null,
     /** An ended session's exit status and log path, shown small under the advice. */
@@ -169,6 +189,10 @@ fun LoadingOverlay(
         dragging -> stringResource(stages[active].dragging ?: stages[active].detail)
         else -> stringResource(stages[active].detail)
     }
+    // The run that offers the edges: only the advanced Play asks for it, and only a Steam session
+    // has edges to offer. Everything that belongs to "the choice and the numbers to judge it by"
+    // hangs off this one flag, so the plain Play's screen stays the screen it always was.
+    val advanced = !ended && steam && onSteamPick != null && steamChoices.isNotEmpty()
     val context = LocalContext.current
     // The Steam tab's wall behind it, dimmed and slowed: starting Steam reads as the same place settling in.
     val games by produceState(emptyList<Library.SteamGame>()) {
@@ -215,9 +239,55 @@ fun LoadingOverlay(
                 maxLines = if (ended) 12 else 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 6.dp).widthIn(max = 520.dp),
             )
+            // Why this line, above which line: the ranking the install's edge was chosen from, then
+            // the edge the bytes are actually coming from. Both read while the download runs, which
+            // is when the question is asked - the Toast that measured them is long gone by then.
+            if (!ended && steamLine.isNotEmpty()) Text(
+                stringResource(R.string.load_steam_line, steamLine),
+                fontSize = 12.sp, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            if (!ended && source.isNotEmpty()) Text(
+                stringResource(R.string.load_source, source),
+                fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            // How fast, not just how far: a crawl and a dead host look identical on a bar, and this
+            // number is what the user reads before deciding to tap another line just below. On the
+            // advanced run it is on that row already, next to the chips it is about.
+            if (!ended && !advanced && topic == LoadingState.Topic.STEAM && speed.isNotEmpty()) Text(
+                stringResource(R.string.load_speed, speed),
+                fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant,
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            // The two edges the client install picks from, offered by hand while it runs: the script
+            // switches mid-file when one is tapped (see SteamLineSwitch), so the choice is not
+            // advice for next time but a change to this download.
+            //
+            // Shown only when this run asked for it - the "advanced play" button; Play's screen is
+            // the one it always was. It outlives the stage it belongs to: a client that is already
+            // current finishes the install stage in about two seconds, which used to put this list
+            // on screen for two seconds - long enough to see, too short to touch. And it takes taps
+            // before the install starts, not only during it: the file it writes is read at the
+            // first fetch, so a choice made while the session is still coming up decides the edge
+            // the download begins on.
+            //
+            // The clock and the rate ride this row (see SteamLinePicker); the two lines they used to
+            // own further down are dropped for that run, or the same number would be on screen twice
+            // - once where it is read, once where it is out of the way.
+            if (advanced) {
+                SteamLinePicker(
+                    steamChoices, steamPick, elapsed = elapsed, speed = speed,
+                    onPick = onSteamPick!!,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
             if (!ended) LoadSegments(stages.size, active, percent, Modifier.padding(top = 18.dp))
             // The clock, so a quiet stretch still reads as work going on rather than a hang.
-            if (!ended && elapsed.isNotEmpty()) Text(
+            if (!ended && !advanced && elapsed.isNotEmpty()) Text(
                 elapsed, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
                 textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 12.dp),
@@ -235,6 +305,14 @@ fun LoadingOverlay(
             modifier = Modifier.align(Alignment.BottomCenter).padding(start = 120.dp, end = 120.dp, bottom = 28.dp),
         )
         if (!ended && onCancel != null) CancelHint(onCancel, Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp))
+        // The fork's own version, top left as on the Steam page: a build handed around by hand
+        // should be identifiable from the screen it is on, this one included.
+        Text(
+            "COK" + com.droiddeck.launcher.BuildConfig.FORK_VERSION,
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.onBackground.copy(alpha = 0.5f),
+            modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
+        )
         if (flood != null) FloodGather(flood, ball, onFlooded)
     }
 }
@@ -343,4 +421,112 @@ fun SessionPausedOverlay(title: String = stringResource(R.string.load_steam_paus
             )
         }
     }
+}
+
+/**
+ * Which edge this download should use, as three chips: automatic first, then the two edges - and
+ * beside them the two numbers that say what the download is doing with that edge.
+ *
+ * Three is the whole menu, not a page of one: the client-update chain has exactly two edges (see
+ * the archive's Z section - the third candidate host does not even resolve), so "automatic" plus
+ * two is every choice that exists. The tap changes the file in flight rather than a setting for
+ * next time: the install script watches for it and restarts the current component on that edge.
+ *
+ * The clock and the rate belong here rather than on lines of their own. They are the answer to the
+ * question the chips ask - "is this edge worth keeping" - and they used to be somewhere else: the
+ * rate on a line of its own above, the clock under the bar at the bottom of the page, where the
+ * hint that slides in at the bottom sat on top of it (DroidDeckCOK). Reading a rate and a choice
+ * that are a whole panel apart is how "the tap changed nothing" was concluded from a screen that
+ * was never showing the two things together.
+ *
+ * The chips are ordinary controls of this app, not labels that happen to take a tap: they take
+ * focus from the pad (the ring and the lit border are the same language as every other control),
+ * A confirms, and touch works as it always did. The first chip asks for the focus when the row
+ * appears, so a pad user has something under the ring before pressing anything - a controller's
+ * A goes to whatever holds focus, and without this the row was visible, lit and unreachable.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SteamLinePicker(
+    choices: List<String>,
+    chosen: String,
+    /** "1:23 elapsed" - the clock, on this row instead of under the bar. */
+    elapsed: String,
+    /** "1.2 MB/s", or empty when nothing is being fetched. */
+    speed: String,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    // A page narrow enough to run out of width wraps rather than clips: three chips, a clock and a
+    // rate are one line on this device and two on a phone held upright, and neither is a puzzle.
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            stringResource(R.string.load_steam_pick),
+            fontSize = 12.sp, color = colors.onSurfaceVariant.copy(alpha = 0.7f),
+        )
+        LineChip(
+            stringResource(R.string.load_steam_pick_auto), chosen.isEmpty(),
+            modifier = Modifier.focusRequester(first),
+        ) { onPick(SteamCdn.AUTO) }
+        choices.forEach { value ->
+            LineChip(SteamCdnProbe.label(SteamCdn.hosts(value).first()), chosen == value) { onPick(value) }
+        }
+        if (elapsed.isNotEmpty()) Text(
+            elapsed, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+            color = colors.onSurfaceVariant.copy(alpha = 0.75f),
+        )
+        if (speed.isNotEmpty()) Text(
+            speed, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+            color = colors.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun LineChip(
+    text: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(14.dp)
+    val src = remember { MutableInteractionSource() }
+    // Focused (pad) or hovered (mouse): the same "under the finger" the rest of the app draws,
+    // so which chip A would press is never a guess.
+    val hot = rememberHot(src)
+    Text(
+        text,
+        fontSize = 12.sp,
+        color = if (active) colors.primary else colors.onSurfaceVariant,
+        modifier = modifier
+            .clip(shape)
+            .background(
+                when {
+                    active -> colors.primary.copy(alpha = 0.16f)
+                    hot -> colors.primary.copy(alpha = 0.10f)
+                    else -> Color.Transparent
+                },
+            )
+            .border(
+                if (active || hot) 2.dp else 1.dp,
+                when {
+                    active -> colors.primary.copy(alpha = 0.55f)
+                    hot -> colors.primary
+                    else -> colors.onSurfaceVariant.copy(alpha = 0.22f)
+                },
+                shape,
+            )
+            .hoverable(src)
+            .clickable(interactionSource = src, indication = LocalIndication.current, role = Role.Button, onClick = onClick)
+            .controllerConfirm(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }

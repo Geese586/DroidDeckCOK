@@ -892,6 +892,7 @@
     <string name="content_linux_desktop_hint">KDE Plasma、Firefox 和你的模拟器</string>
     <string name="games_empty">你在 Steam 安装的游戏会在会话结束后显示在这里。</string>
     <string name="games_play_steam">游玩 Steam</string>
+    <string name="games_play_steam_advanced">进阶游玩</string>
     <string name="games_launch_settings">启动设置</string>
     <string name="games_launch">启动</string>
     <string name="games_files">游戏文件</string>
@@ -1793,7 +1794,7 @@
     <string name="loadstate_starting">正在启动会话…</string>
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
-    <string name="loadstate_elapsed">已用时 %1$d:%2$02d · 仍在处理</string>
+    <string name="loadstate_elapsed">已用时 %1$d:%2$02d</string>
     <string name="loadstate_steam_update">正在下载 Steam 客户端更新 · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
@@ -2089,6 +2090,11 @@
         <item quantity="other">%1$d 个已在游戏中</item>
     </plurals>
     <!-- Re-added by the DroidDeckCOK fork: its own keys, which upstream has no equivalent of. -->
+    <string name="load_source">下载源：%1$s</string>
+    <string name="load_steam_line">客户端更新线路：%1$s</string>
+    <string name="load_steam_pick">线路</string>
+    <string name="load_steam_pick_auto">自动</string>
+    <string name="load_speed">速度 %1$s</string>
     <string name="load_title_runtime">正在准备 Linux 运行环境</string>
     <string name="load_title_session">正在启动会话</string>
     <string name="load_title_steam">正在检查 Steam</string>
@@ -2130,7 +2136,7 @@
     <string name="desktop_lang_export_saved">已保存到 %1$s</string>
     <string name="desktop_lang_export_failed">无法写入桌面语言文件</string>
     <string name="first_local_fonts">字体</string>
-    <string name="first_local_nothing_found">这个文件夹里没有可以安装的文件：需要 linuxfs.tar.zst、Proton 的 .tar.zst、steam-client 文件夹、desktop.tar.zst、fonts 文件夹，或导出驱动的 GPUDrivers 文件夹。</string>
+    <string name="first_local_nothing_found">离线文件校验错误，请下载网盘资料。度盘：链接: https://pan.baidu.com/s/1PY7ow7K81tvcqq0AAj8uNQ 提取码: 9527\n夸克：链接：https://pan.quark.cn/s/3962c8e97fde 提取码：DRMQ</string>
     <string name="first_local_all_installed">运行环境、Proton、Steam 客户端、桌面与 GPU 驱动都已安装，不需要再装。</string>
     <string name="first_local_no_space">可用空间不足：安装这个文件夹大约需要 %1$s，当前只有 %2$s 可用。</string>
     <string name="first_local_failed">第 %1$d/%2$d 步 · %3$s 失败：%4$s</string>
@@ -2139,6 +2145,9 @@
     <string name="first_local_report_title">一键安装未完成</string>
     <string name="first_local_crashed">安装因意外错误中断：%1$s</string>
     <string name="first_local_stalled">%1$s 已经 %2$d 分钟没有进展</string>
+    <string name="first_local_long_step">%1$s 这一步可能需要十分钟左右，请耐心等候（不要关闭或退出应用）。</string>
+    <string name="first_local_client_manifest">Steam 客户端文件夹里没有 %1$s。离线安装靠它校验每个安装包、不会联网下载：请把这个清单文件和安装包放进同一个文件夹。</string>
+    <string name="first_local_client_missing">Steam 客户端文件夹里缺少这一步要装的 %1$d 个文件：\n%2$s\n这一步只用文件夹里的东西、全程不联网；开始「游玩 STEAM」时会从 Valve 把缺的部分下载齐。</string>
     <string name="first_local_logs_save">保存日志</string>
     <string name="first_local_logs_pick">选择安装日志的存放文件夹</string>
     <string name="first_local_logs_saved">日志已复制：%1$d 个文件到 %2$s</string>
@@ -2152,6 +2161,10 @@
     <string name="setup_download_source_official_hint">直接从 GitHub 下载。</string>
     <string name="setup_download_source_china_hint">通过 GitHub 加速通道下载。GitHub 连不上时改用它；中途断线无法续传。</string>
     <string name="setup_download_source_note">对运行时、桌面与模拟器目录、Proton 构建以及 DroidDeck 自身的更新同时生效。</string>
+    <string name="mirror_test_running">正在测试镜像线路…</string>
+    <string name="mirror_test_title">镜像线路实测 · 最快三个</string>
+    <string name="mirror_test_line">%1$d. %2$s —— %3$s</string>
+    <string name="mirror_test_none">镜像线路实测：所有镜像均无响应</string>
     <string name="setup_steam_cdn">Steam 客户端线路</string>
     <string name="setup_steam_cdn_auto">自动</string>
     <string name="setup_steam_cdn_fastly">Fastly</string>
@@ -2170,6 +2183,14 @@
     <string name="setup_line_test_recommend_fastly">Fastly 在这里明显更快——把它固定为 Steam 客户端线路。</string>
     <string name="setup_line_test_recommend_akamai">Akamai 在这里明显更快——把它固定为 Steam 客户端线路。</string>
     <string name="setup_line_test_recommend_none">两条线路都不通。此网络无法从 Valve 安装 Steam 客户端——请用在别处下载好的文件夹安装。</string>
+    <!-- DroidDeckCOK: 同一套线路实测，但在「即将安装 Steam 客户端」那一刻以 Toast 出现。 -->
+    <string name="steam_line_test_running">正在实测 Steam 线路…</string>
+    <string name="steam_line_test_title">Steam 线路实测 · 最快优先</string>
+    <string name="steam_line_test_line">%1$d. %2$s —— %3$s</string>
+    <string name="steam_line_test_pinned">本次安装固定走 %1$s（实测最快）</string>
+    <string name="steam_line_test_auto">另一条线路没有应答，按默认顺序，拒绝时会自动换边。</string>
+    <string name="steam_line_test_order">本次先走 %1$s，卡住会自动换到另一条线路。</string>
+    <string name="steam_line_test_none">两条线路都连不上：这个网络可能被拦截。可以换网络或开加速器；已经装好的客户端不受影响。</string>
     <string name="setup_runtime_local">从本地安装</string>
     <string name="setup_runtime_local_pick">选择运行时安装包（linuxfs.tar.zst）</string>
     <string name="setup_runtime_local_unverified_title">无法校验此文件</string>

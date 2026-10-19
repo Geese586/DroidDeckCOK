@@ -902,6 +902,7 @@
     <string name="content_linux_desktop_hint">KDE Plasma, Firefox y tus emuladores</string>
     <string name="games_empty">Los juegos que instales en Steam aparecen aquí después de la sesión.</string>
     <string name="games_play_steam">Jugar en Steam</string>
+    <string name="games_play_steam_advanced">Elegir línea y jugar</string>
     <string name="games_launch_settings">Ajustes de inicio</string>
     <string name="games_launch">Iniciar</string>
     <string name="games_files">Archivos del juego</string>
@@ -1833,7 +1834,7 @@
     <string name="loadstate_starting">Iniciando la sesión…</string>
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
-    <string name="loadstate_elapsed">%1$d:%2$02d transcurridos · sigue en marcha</string>
+    <string name="loadstate_elapsed">%1$d:%2$02d transcurridos</string>
     <string name="loadstate_steam_update">Descargando la actualización del cliente de Steam · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
@@ -2133,6 +2134,11 @@
         <item quantity="other">%1$d ya en Juegos</item>
     </plurals>
     <!-- Re-added by the DroidDeckCOK fork: its own keys, which upstream has no equivalent of. -->
+    <string name="load_source">Origen: %1$s</string>
+    <string name="load_steam_line">Línea del cliente Steam: %1$s</string>
+    <string name="load_steam_pick">Línea</string>
+    <string name="load_steam_pick_auto">Automática</string>
+    <string name="load_speed">Velocidad %1$s</string>
     <string name="load_title_runtime">Preparando el entorno de Linux</string>
     <string name="load_title_session">Iniciando la sesión</string>
     <string name="load_title_steam">Comprobando Steam</string>
@@ -2183,6 +2189,9 @@
     <string name="first_local_report_title">La instalación no terminó</string>
     <string name="first_local_crashed">La instalacion se detuvo por un error inesperado: %1$s</string>
     <string name="first_local_stalled">%1$s lleva %2$d minutos sin avanzar</string>
+    <string name="first_local_long_step">%1$s puede tardar unos diez minutos aqui. Espere por favor y no cierre la aplicacion.</string>
+    <string name="first_local_client_manifest">Falta %1$s en la carpeta del cliente de Steam. La instalacion sin red comprueba cada paquete con ese manifiesto y no descarga nada: copialo junto a los paquetes.</string>
+    <string name="first_local_client_missing">Faltan %1$d archivos de los que este paso instala en la carpeta del cliente de Steam://n%2$s//nEste paso instala solo desde la carpeta y no descarga nada; al iniciar una sesion de Steam se descargara lo que falte desde Valve.</string>
     <string name="first_local_logs_save">Guardar registro</string>
     <string name="first_local_logs_pick">Elige una carpeta para el registro de instalacion</string>
     <string name="first_local_logs_saved">Registro copiado: %1$d archivos en %2$s</string>
@@ -2196,6 +2205,11 @@
     <string name="setup_download_source_official_hint">Se descarga directamente de GitHub.</string>
     <string name="setup_download_source_china_hint">Se descarga mediante un acelerador de GitHub. Úsalo cuando GitHub no responda; la descarga no se reanuda si se interrumpe.</string>
     <string name="setup_download_source_note">Se aplica al runtime, a los catálogos de escritorio y emuladores, a las compilaciones de Proton y a las actualizaciones de DroidDeck.</string>
+    <!-- DroidDeckCOK: English on purpose - see the note in values-ja. -->
+    <string name="mirror_test_running">Testing mirror speed…</string>
+    <string name="mirror_test_title">Mirror speed test — fastest three</string>
+    <string name="mirror_test_line">%1$d. %2$s — %3$s</string>
+    <string name="mirror_test_none">Mirror speed test: no mirror answered</string>
     <string name="setup_steam_cdn">Línea del cliente Steam</string>
     <string name="setup_steam_cdn_auto">Automático</string>
     <string name="setup_steam_cdn_fastly">Fastly</string>
@@ -2214,6 +2228,14 @@
     <string name="setup_line_test_recommend_fastly">Fastly es claramente más rápida aquí - fíjala como línea del cliente Steam en Ajustes.</string>
     <string name="setup_line_test_recommend_akamai">Akamai es claramente más rápida aquí - fíjala como línea del cliente Steam en Ajustes.</string>
     <string name="setup_line_test_recommend_none">Ninguna línea respondió. Las instalaciones del cliente Steam desde Valve no funcionarán en esta red - instala el cliente desde una carpeta descargada en otro sitio.</string>
+    <!-- DroidDeckCOK: la misma prueba de líneas, justo antes de instalar el cliente Steam (Toast). En inglés. -->
+    <string name="steam_line_test_running">Testing the Steam lines…</string>
+    <string name="steam_line_test_title">Steam lines measured · fastest first</string>
+    <string name="steam_line_test_line">%1$d. %2$s — %3$s</string>
+    <string name="steam_line_test_pinned">This install goes through %1$s (fastest measured)</string>
+    <string name="steam_line_test_auto">Only one edge answered, so the script keeps its own order and switches if that one refuses.</string>
+    <string name="steam_line_test_order">This install tries %1$s first and falls back to the other edge if it stalls.</string>
+    <string name="steam_line_test_none">Neither edge answered, so the client can only come from a local folder.</string>
     <string name="setup_runtime_local">Instalar desde archivo</string>
     <string name="setup_runtime_local_pick">Elige un archivo del runtime (linuxfs.tar.zst)</string>
     <string name="setup_runtime_local_unverified_title">No se puede comprobar este archivo</string>

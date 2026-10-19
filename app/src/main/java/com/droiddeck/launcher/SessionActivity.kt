@@ -76,6 +76,8 @@ import com.droiddeck.launcher.session.SessionPhase
 import com.droiddeck.launcher.session.SessionPaths
 import com.droiddeck.launcher.wayland.HdrSupport
 import com.droiddeck.launcher.session.SessionService
+import com.droiddeck.launcher.session.SteamCdn
+import com.droiddeck.launcher.session.SteamLineSwitch
 import com.droiddeck.launcher.session.SessionState
 import com.droiddeck.launcher.session.ProtonDefault
 import com.droiddeck.launcher.session.SelectedGameProfile
@@ -530,10 +532,29 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                 CursorOverlay(cursorPos, cursorVisible, resources.displayMetrics.density,
                     cursorImage, cursorHotX, cursorHotY, cursorImageScale)
                 if (hud.text.isNotEmpty()) HudText(hud.text)
+                // The Steam client's edge menu, live while its download runs: the tap is written
+                // to the session root and the install script picks it up within a second
+                // (see SteamLineSwitch). Held in state so the chip under the finger lights up
+                // before the script has had time to change anything. The file is the truth across
+                // a rebuild - the app clears it when the user presses play, so this reads
+                // "automatic" for a fresh run and whatever was tapped for a retry of the same one.
+                val steamPick = androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(SteamLineSwitch.current(this@SessionActivity))
+                }
                 if (loading.visible) LoadingOverlay(
                     loading.step, loading.percent, loading.elapsed, loading.hint, loading.ended,
                     topic = loading.topic, readable = loading.readable,
                     stageSeconds = loading.stageSeconds,
+                    source = loading.source,
+                    steamLine = loading.steamLine,
+                    speed = loading.speed,
+                    steamChoices = if (lineMenu) SteamCdn.choicesForSession() else emptyList(),
+                    steamPick = steamPick.value,
+                    onSteamPick = { choice ->
+                        SteamLineSwitch.choose(this@SessionActivity, choice)
+                        steamPick.value = choice
+                        Log.i(TAG, "steam line tapped: ${choice.ifEmpty { "auto" }}")
+                    },
                     titles = loadingTitles(), steam = loadingMode() == SessionService.MODE_STEAM,
                     // As the drawer's Stop does: the service stops, and a start still installing is cancelled.
                     onCancel = { SessionService.stop(this@SessionActivity); finish() },
@@ -1174,13 +1195,24 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             uiHandler.post {
                 loading.percent = percent
                 when (step) {
-                    com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.Step.DOWNLOADING -> loading.say(
-                        if (percent >= 0 && mb > 0) getString(what.downloadingMb, percent * mb / 100, mb) else getString(what.downloading),
-                        what.topic, readable = true,
-                    )
-                    com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.Step.VERIFYING ->
+                    com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.Step.DOWNLOADING -> {
+                        // The installer builds "<what> · <host>" for its own screen; this one has the
+                        // megabyte count instead, so it keeps only the host - the part that says which
+                        // mirror the bytes are coming from. Empty while nothing has answered yet.
+                        loading.source = stage.substringAfterLast(" · ", "")
+                        loading.say(
+                            if (percent >= 0 && mb > 0) getString(what.downloadingMb, percent * mb / 100, mb) else getString(what.downloading),
+                            what.topic, readable = true,
+                        )
+                    }
+                    com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.Step.VERIFYING -> {
+                        loading.source = ""
                         loading.say(getString(what.checking), what.topic, what.checkingReadable)
-                    else -> loading.say(getString(what.unpacking), what.topic, readable = true)
+                    }
+                    else -> {
+                        loading.source = ""
+                        loading.say(getString(what.unpacking), what.topic, readable = true)
+                    }
                 }
             }
         }
@@ -1308,6 +1340,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // start nothing, and leave the loading panel counting up over a dead session.
         if (!SessionState.running) {
             SessionEvents.transition(SessionPhase.STARTING_GUEST, "guest.starting")
+            // Whether this run is the one that offers the edge menu: the install reads it as
+            // BL_STEAM_SYNC, which is what makes the client's update come down through the line
+            // the user picks instead of through the client's own bootstrapper.
+            SessionState.lineMenu = lineMenu
             SessionService.start(
                 this, intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM,
                 intent.getStringExtra(SessionService.EXTRA_PROGRAM),
@@ -1545,6 +1581,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     }
 
     /** The same start again, in a fresh activity: the ended one keeps no session to reuse. */
+    /**
+     * The loading screen offers the Steam client's two edges by name, instead of only showing the
+     * one the script picked. Set by the "advanced play" button; Play leaves it off so its screen is
+     * the one it always was (see MainActivity.startSteamSession).
+     */
+    private val lineMenu: Boolean by lazy { intent?.getBooleanExtra(SessionService.EXTRA_LINE_MENU, false) == true }
+
     private fun retrySession() {
         val again = Intent(intent)
         closeAtOnce = true
@@ -1619,6 +1662,21 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) finish()
                 return true
             }
+            return super.dispatchKeyEvent(event)
+        }
+        // A running session's pad belongs to the guest, but while the loading screen covers it the
+        // pad is the screen's: the edge chips are ordinary controls, and handing the d-pad and A to
+        // padBridge left them visible, lit by the focus ring and impossible to reach - reported from
+        // a handheld, where the whole screen is driven by the pad. Only focus moves and confirm are
+        // taken here; every other key still goes down to the guest as before.
+        if (fromController && ::loading.isInitialized && loading.visible && !drawerOpen &&
+            (event.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_UP || event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER)) {
+            // The overlay holds the window focus or the key goes nowhere: the session's surface
+            // underneath is what has it while the picture is being set up.
+            if (::sessionOverlay.isInitialized && !sessionOverlay.hasFocus()) sessionOverlay.requestFocus()
             return super.dispatchKeyEvent(event)
         }
         if (drawerOpen) {

@@ -3,6 +3,7 @@ import hashlib
 import gzip
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -29,6 +30,26 @@ def digest(path):
     return result.hexdigest()
 
 
+# The version strings are the release button, not part of the payload: this fork's owner bumps
+# them by hand before every build, and hashing the file exactly as it stands turned "bump the
+# version" into "the build dies saying the runtime sources moved", with a checkout that had
+# nothing wrong with it. They are blanked out before hashing; every other byte of build.gradle is
+# still hashed, so a real edit to the build script still trips the check.
+VERSION_LINES = re.compile(
+    r'(?m)^[ \t]*(?:'
+    r'versionCode(?![A-Za-z])'
+    r'|versionName(?![A-Za-z])'
+    r'|buildConfigField[ \t]*\(?[ \t]*"String"[ \t]*,[ \t]*"FORK_VERSION"'
+    r')[^\n]*$'
+)
+
+
+def source_digest(path):
+    text = path.read_text(encoding='utf-8')
+    blanked = VERSION_LINES.sub('# <version line>', text)
+    return hashlib.sha256(blanked.encode('utf-8')).hexdigest()
+
+
 def sources(root):
     files = []
     for name in SOURCE_PATHS:
@@ -39,7 +60,9 @@ def sources(root):
     # names in check_apk(), and a manifest CI wrote inside a Linux container. Upstream records on
     # Linux, where the two agree; this fork records on Windows, where they do not. See the fork's
     # archive README, section 0.
-    return {path.relative_to(root).as_posix(): digest(path) for path in sorted(set(files))
+    return {path.relative_to(root).as_posix():
+            (source_digest(path) if path.relative_to(root).as_posix() == 'app/build.gradle' else digest(path))
+            for path in sorted(set(files))
             if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc'}
 
 
@@ -126,7 +149,8 @@ def verify(root=ROOT):
     except (OSError, ValueError):
         raise ValueError('Runtime inputs have not been prepared. Run tools/build_local.sh.')
     if data.get('version') != 1 or data.get('sources') != sources(root):
-        raise ValueError('Runtime sources changed since preparation. Run tools/build_local.sh.')
+        raise ValueError('Runtime sources changed since preparation. Run tools/build_local.sh, or '
+                         'python tools/release/runtime_inputs.py record if only this checkout moved.')
     for name in required():
         if name not in data['outputs']:
             raise ValueError('Runtime manifest missing ' + name)

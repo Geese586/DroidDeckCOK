@@ -35,6 +35,34 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
     var percent by mutableIntStateOf(-1)
 
     /**
+     * The host a running download is coming from, empty when nothing is downloading. The packages'
+     * stage lines carry it after a " · " (the installer appends the mirror it settled on), and it
+     * is the answer to "why is this sitting at 0%": which of the accelerators is the one stalling.
+     */
+    var source by mutableStateOf("")
+
+    /**
+     * The line ranking measured for this session, as one line (see [SteamCdn.report]), shown for
+     * the whole of a Steam session's loading screen. The Toast that carries the same numbers is
+     * gone in three seconds and the download it was measured for takes minutes, so this is the
+     * answer to "which line is this, and why" for as long as the question can be asked - and it
+     * stays put when the install stage ends, because a client that is already up to date finishes
+     * that stage in about two seconds and the line used to blink out with it. Empty outside a
+     * Steam session, and empty in a run that measured nothing.
+     */
+    var steamLine by mutableStateOf("")
+        private set
+
+    /**
+     * How fast the file being fetched is arriving, as a line ("1.2 MB/s"); empty when nothing is
+     * downloading. The percent says how far, not whether the line is alive - a crawl and a dead
+     * host look the same on a progress bar, and telling them apart is exactly what a user does
+     * before tapping another edge on this screen.
+     */
+    var speed by mutableStateOf("")
+        private set
+
+    /**
      * Seconds the current checklist stage has been running. A stage that drags on says more about
      * itself (see the loading screen's last stage): the alternative is a screen that looks frozen
      * only because the one thing it can say has been said.
@@ -81,12 +109,27 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
     private var stepText: String? = null
     private var progressAt = -1L
     private var progressTenths = -1
+    /** Bytes per second the last progress line carried, and where it was read. */
+    private var speedAt = -1L
+    private var speedBytes = 0L
     private var bootAt = -1L
     private var bootTenths = -1
     private var downloadAt = -1L
     private var download: String? = null
     private var downloadUnpack = false
     private var downloadTenths = -1
+
+    /**
+     * The edge the component in [download] is coming from, as the install script names it on that
+     * same line. Until this existed the Steam client's install was the one download in the app that
+     * never said where its bytes came from - the runtime's own has carried its mirror since
+     * DroidDeckCOK's mirror work - and "is this the line I measured fastest" had no answer on
+     * screen at all.
+     */
+    private var downloadSource = ""
+
+    /** Whether [source] was filled from that line, so leaving the stage clears it and not someone else's. */
+    private var sourceFromScript = false
 
     /** The client has been started in this session, so its own log is the one still moving. */
     private var clientStarted = false
@@ -173,10 +216,31 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
         topic = state.topic
         readable = state.readable
         percent = state.percent
+        // The script names the edge each component comes from; that goes on the source line, and
+        // leaving the stage clears it - but only if it was this that filled it, so the runtime
+        // installer's own mirror line, written from a listener of its own, is left alone.
+        if (state.source.isNotEmpty()) {
+            source = state.source
+            sourceFromScript = true
+        } else if (sourceFromScript && state.topic != Topic.STEAM) {
+            source = ""
+            sourceFromScript = false
+        }
+        steamLine = if (steam) SteamCdn.report() else ""
+        // The rate rides the install script's progress line and belongs to the stage that line
+        // describes. Outside a Steam download there is nothing it could be about, and a stale
+        // number next to the runtime's own bar would be a lie rather than decoration.
+        speed = if (state.topic == Topic.STEAM && speedBytes > 0) {
+            SteamCdnProbe.rateToString(speedBytes)
+        } else ""
         restage(state.topic)
     }
 
-    private class Line(val line: String, val percent: Int, val topic: Topic, val readable: Boolean)
+    private class Line(
+        val line: String, val percent: Int, val topic: Topic, val readable: Boolean,
+        /** The host this stage's download is coming from, empty when the line names none. */
+        val source: String = "",
+    )
 
     /** What one of the bootstrapper's lines is about, in the terms the screen has words for. */
     private enum class Kind { FAILED, CHECK, VERIFY, INSTALL, DOWNLOAD }
@@ -244,6 +308,7 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
                         val size = m.groupValues[5]
                         downloadAt = at
                         downloadUnpack = m.groupValues[1] == "unpacking"
+                        downloadSource = m.groupValues[6]
                         download = if (size.isEmpty()) m.groupValues[2] else m.groupValues[2] + " · " + size
                         downloadTenths = m.groupValues[3].toInt() * 1000 / maxOf(1, m.groupValues[4].toInt())
                     }
@@ -253,6 +318,14 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
                 if (p != null && at >= progressAt) {
                     progressAt = at
                     progressTenths = p.groupValues[1].toInt() * 10 + p.groupValues[2].toInt()
+                }
+                // The same line carries the rate when the install script is the one writing it;
+                // "== PROGRESS 42.3 1245184 B/s". Bytes, not a formatted unit: the app already has
+                // one place that words a rate (the line test's report), and a second would drift.
+                val r = PROGRESS_RATE.find(line)
+                if (r != null && at >= speedAt) {
+                    speedAt = at
+                    speedBytes = r.groupValues[3].toLongOrNull() ?: 0L
                 }
                 val numbers = BOOTSTRAPPER_PROGRESS?.numbers(line)
                 if (numbers != null && numbers.size >= 2 && numbers[1] > 0 && at >= bootAt) {
@@ -291,6 +364,7 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
                     if (downloadTenths >= 0) tenths(downloadTenths) + " (" + download + ")" else download,
                 ),
                 if (downloadTenths >= 0) downloadTenths / 10 else -1, Topic.STEAM, readable = true,
+                source = downloadSource,
             )
             client != null -> client
             // Past "starting the Steam client" the script has nothing left to say.
@@ -573,12 +647,23 @@ class LoadingState(context: Context, private val steam: Boolean = true) {
         private val PROGRESS = Regex("""== PROGRESS (\d+)\.(\d)""")
 
         /**
+         * The same line with the rate the install script measured over the last second, in bytes.
+         * Raw bytes rather than "1.2 MB/s" so that the wording stays in one place in the app
+         * ([SteamCdnProbe.rateToString], which the line test's report already uses).
+         */
+        private val PROGRESS_RATE = Regex("""== PROGRESS (\d+)\.(\d)\s+(\d+)\s*B/s""")
+
+        /**
          * One component at a time, as droiddeck-steam-install announces each: fetched, or taken
          * from the local folder. The size is there on the downloads so a component that takes
-         * minutes says why - 105 MB explains a wait that a file name does not.
+         * minutes says why - 105 MB explains a wait that a file name does not - and the edge is
+         * there from the sixth group on, because the screen shows which of the two lines the bytes
+         * are actually coming from (and, when one crawls and the script switches, that it did).
+         * The retry the script writes instead ("again, from ...") has no counter and matches none
+         * of this on purpose: the screen keeps the component it is on rather than losing its count.
          */
         private val INSTALL_COUNT = Regex(
-            """(downloading|unpacking) Steam(?: from the local copy)?: (\S+) \((\d+)/(\d+)(?:, ([\d.]+ [KMG]B))?\)""",
+            """(downloading|unpacking) Steam(?: from the local copy)?: (\S+) \((\d+)/(\d+)(?:, ([\d.]+ [KMG]B))?(?:, from ([\S]+))?\)""",
         )
     }
 }

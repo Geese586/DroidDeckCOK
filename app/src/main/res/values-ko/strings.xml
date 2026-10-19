@@ -892,6 +892,7 @@
     <string name="content_linux_desktop_hint">KDE Plasma, Firefox 및 에뮬레이터</string>
     <string name="games_empty">Steam에서 설치한 게임은 세션 종료 후 여기에 표시됩니다.</string>
     <string name="games_play_steam">Steam 실행</string>
+    <string name="games_play_steam_advanced">회선 선택 후 실행</string>
     <string name="games_launch_settings">실행 설정</string>
     <string name="games_launch">실행</string>
     <string name="games_files">게임 파일</string>
@@ -1793,7 +1794,7 @@
     <string name="loadstate_starting">세션 시작 중…</string>
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
-    <string name="loadstate_elapsed">%1$d:%2$02d 경과 · 아직 진행 중</string>
+    <string name="loadstate_elapsed">%1$d:%2$02d 경과</string>
     <string name="loadstate_steam_update">Steam 클라이언트 업데이트 다운로드 중 · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
@@ -2089,6 +2090,11 @@
         <item quantity="other">%1$d개는 이미 게임에 있음</item>
     </plurals>
     <!-- Re-added by the DroidDeckCOK fork: its own keys, which upstream has no equivalent of. -->
+    <string name="load_source">다운로드 소스: %1$s</string>
+    <string name="load_steam_line">Steam 클라이언트 회선: %1$s</string>
+    <string name="load_steam_pick">회선</string>
+    <string name="load_steam_pick_auto">자동</string>
+    <string name="load_speed">속도 %1$s</string>
     <string name="load_title_runtime">Linux 런타임을 준비하는 중</string>
     <string name="load_title_session">세션을 시작하는 중</string>
     <string name="load_title_steam">Steam을 확인하는 중</string>
@@ -2139,6 +2145,9 @@
     <string name="first_local_report_title">원클릭 설치가 끝나지 않았습니다</string>
     <string name="first_local_crashed">예기치 않은 오류로 설치가 중단되었습니다: %1$s</string>
     <string name="first_local_stalled">%1$s이(가) %2$d분 동안 진행되지 않았습니다</string>
+    <string name="first_local_long_step">%1$s 단계는 여기서 10분 정도 걸릴 수 있습니다. 잠시만 기다려 주세요(앱을 종료하지 마세요).</string>
+    <string name="first_local_client_manifest">Steam 클라이언트 폴더에 %1$s이(가) 없습니다. 오프라인 설치는 이 매니페스트로 각 패키지를 검증하며 다운로드는 하지 않습니다. 패키지와 같은 폴더에 넣어 주세요.</string>
+    <string name="first_local_client_missing">Steam 클라이언트 폴더에 이 단계에서 설치할 파일 %1$d개가 없습니다:\n%2$s\n이 단계는 폴더 안의 파일만 설치하고 다운로드는 하지 않습니다. 「STEAM 플레이」를 시작하면 Valve에서 없는 부분을 내려받습니다.</string>
     <string name="first_local_logs_save">로그 저장</string>
     <string name="first_local_logs_pick">설치 로그를 저장할 폴더 선택</string>
     <string name="first_local_logs_saved">로그를 복사했습니다: %2$s에 %1$d개 파일</string>
@@ -2152,6 +2161,11 @@
     <string name="setup_download_source_official_hint">GitHub에서 바로 내려받습니다.</string>
     <string name="setup_download_source_china_hint">GitHub 가속기를 통해 내려받습니다. GitHub에 연결되지 않을 때 사용하세요. 중단되면 이어받기가 되지 않습니다.</string>
     <string name="setup_download_source_note">런타임, 데스크톱 및 에뮬레이터 카탈로그, Proton 빌드, DroidDeck 자체 업데이트에 적용됩니다.</string>
+    <!-- DroidDeckCOK: English on purpose - see the note in values-ja. -->
+    <string name="mirror_test_running">Testing mirror speed…</string>
+    <string name="mirror_test_title">Mirror speed test — fastest three</string>
+    <string name="mirror_test_line">%1$d. %2$s — %3$s</string>
+    <string name="mirror_test_none">Mirror speed test: no mirror answered</string>
     <string name="setup_steam_cdn">Steam 클라이언트 회선</string>
     <string name="setup_steam_cdn_auto">자동</string>
     <string name="setup_steam_cdn_fastly">Fastly</string>
@@ -2170,6 +2184,14 @@
     <string name="setup_line_test_recommend_fastly">Fastly가 확실히 빠릅니다 - Steam 클라이언트 회선으로 고정하세요.</string>
     <string name="setup_line_test_recommend_akamai">Akamai가 확실히 빠릅니다 - Steam 클라이언트 회선으로 고정하세요.</string>
     <string name="setup_line_test_recommend_none">두 회선 모두 응답하지 않습니다. 이 네트워크에서는 Valve에서 Steam 클라이언트를 설치할 수 없습니다 - 다른 곳에서 받아둔 폴더로 설치하세요.</string>
+    <!-- DroidDeckCOK: Steam 클라이언트 설치 직전에 뜨는 같은 회선 테스트(Toast). 영어 그대로. -->
+    <string name="steam_line_test_running">Testing the Steam lines…</string>
+    <string name="steam_line_test_title">Steam lines measured · fastest first</string>
+    <string name="steam_line_test_line">%1$d. %2$s — %3$s</string>
+    <string name="steam_line_test_pinned">This install goes through %1$s (fastest measured)</string>
+    <string name="steam_line_test_auto">Only one edge answered, so the script keeps its own order and switches if that one refuses.</string>
+    <string name="steam_line_test_order">This install tries %1$s first and falls back to the other edge if it stalls.</string>
+    <string name="steam_line_test_none">Neither edge answered, so the client can only come from a local folder.</string>
     <string name="setup_runtime_local">파일에서 설치</string>
     <string name="setup_runtime_local_pick">런타임 아카이브 선택 (linuxfs.tar.zst)</string>
     <string name="setup_runtime_local_unverified_title">이 파일을 확인할 수 없습니다</string>

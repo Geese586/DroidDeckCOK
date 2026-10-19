@@ -108,4 +108,129 @@ class SteamCdnTest {
         assertTrue(SteamCdn.AKAMAI in SteamCdn.choices)
         assertFalse("official" in SteamCdn.choices)
     }
+
+    @Test
+    fun `edges come back fastest first, silent ones last`() {
+        val slow = SteamCdnProbe.Edge(SteamCdn.FASTLY_HOST, true, 200, 300L, 900_000, null)
+        val fast = SteamCdnProbe.Edge(SteamCdn.AKAMAI_HOST, true, 200, 300L, 6_000_000, null)
+        val dead = SteamCdnProbe.Edge(SteamCdn.FASTLY_HOST, false, 0, -1L, 0L, SteamCdnProbe.TIMED_OUT)
+        assertEquals(
+            listOf(fast, slow, dead),
+            SteamCdnProbe.ranked(listOf(dead, slow, fast)),
+        )
+        // A budget of nothing measures nothing, and says so rather than throwing.
+        assertEquals(emptyList<SteamCdnProbe.Edge>(), SteamCdnProbe.measureAll(emptyList(), 1_000))
+    }
+
+    @Test
+    fun `edges are named by network, not by DNS`() {
+        assertEquals("Fastly", SteamCdnProbe.label(SteamCdn.FASTLY_HOST))
+        assertEquals("Akamai", SteamCdnProbe.label(SteamCdn.AKAMAI_HOST))
+        assertEquals("edge.example.com", SteamCdnProbe.label("edge.example.com"))
+    }
+
+    @Test
+    fun `a measurement outranks the setting for one run only`() {
+        try {
+            SteamCdn.setOverride(SteamCdn.AKAMAI)
+            assertEquals(SteamCdn.AKAMAI, SteamCdn.resolved(SteamCdn.FASTLY))
+            assertEquals(SteamCdn.AKAMAI, SteamCdn.resolved(SteamCdn.AUTO))
+            // The next run that measures nothing goes back to the setting - the measurement is
+            // never a standing preference, and an unknown choice is the same as none.
+            SteamCdn.setOverride(SteamCdn.AUTO)
+            assertEquals(SteamCdn.FASTLY, SteamCdn.resolved(SteamCdn.FASTLY))
+            SteamCdn.setOverride("edge.example.com")
+            assertNull(SteamCdn.guestValue(SteamCdn.resolved(SteamCdn.AUTO)).takeIf { it.isNotEmpty() })
+        } finally {
+            SteamCdn.setOverride(SteamCdn.AUTO)
+        }
+    }
+
+    @Test
+    fun `a measurement keeps its numbers for the run it was taken for`() {
+        try {
+            val ranking = "1. Fastly - 3.2 MB/s \u00b7 2. Akamai - 1.1 MB/s"
+            // Nothing measured yet, so the loading screen has nothing to show.
+            assertEquals("", SteamCdn.report())
+            SteamCdn.setMeasured(SteamCdn.FASTLY, ranking)
+            assertEquals(SteamCdn.FASTLY, SteamCdn.resolved(SteamCdn.AKAMAI))
+            assertEquals(ranking, SteamCdn.report())
+            // An edge picked by hand carries no numbers: the ranking belongs to the run that
+            // measured it, and a later install must not be shown the old one's reasons.
+            SteamCdn.setOverride(SteamCdn.AUTO)
+            assertEquals("", SteamCdn.report())
+            // So does a run that measured nothing, and an edge nobody measured is no edge at all.
+            SteamCdn.setMeasured("edge.example.com", ranking)
+            assertEquals(SteamCdn.AUTO, SteamCdn.resolved(SteamCdn.AUTO))
+            assertEquals(ranking, SteamCdn.report())
+        } finally {
+            SteamCdn.setOverride(SteamCdn.AUTO)
+        }
+    }
+
+    /**
+     * A lead short of a pin still decides which edge is tried first. 1.0 MB/s against 675 KB/s is
+     * 1.5x, and the rule that only acted on 2x made the script download through the slower edge
+     * while the report named the faster one. The measurement now reaches the script as an order -
+     * fastest first, the other kept as the fallback - and a pin is only for a lead in another
+     * league, or for the user's own choice.
+     */
+    @Test
+    fun aMeasuredLeadShortOfAPinStillDecidesTheOrder() {
+        try {
+            SteamCdn.setMeasured(
+                SteamCdn.AUTO, "ranking",
+                listOf(SteamCdn.AKAMAI_HOST, SteamCdn.FASTLY_HOST),
+            )
+            assertEquals(
+                listOf(SteamCdn.AKAMAI_HOST, SteamCdn.FASTLY_HOST),
+                SteamCdn.orderForSession(),
+            )
+            assertEquals(
+                "client-update.akamai.steamstatic.com client-update.fastly.steamstatic.com",
+                SteamCdn.orderValue(SteamCdn.orderForSession()),
+            )
+            // The order lives for one run, like the ranking it came from.
+            SteamCdn.setOverride(SteamCdn.AUTO)
+            assertTrue(SteamCdn.orderForSession().isEmpty())
+        } finally {
+            SteamCdn.setOverride(SteamCdn.AUTO)
+        }
+    }
+
+    /**
+     * An order is only passed when both edges are in it: one host alone would be a pin without the
+     * reason a pin needs, and the script's own order at least switches when a host refuses a file.
+     * Anything the app does not recognise is dropped rather than forwarded to the guest.
+     */
+    @Test
+    fun anOrderNeedsBothEdgesOrItIsNotPassed() {
+        assertEquals("", SteamCdn.orderValue(emptyList()))
+        assertEquals("", SteamCdn.orderValue(listOf(SteamCdn.FASTLY_HOST)))
+        assertEquals("", SteamCdn.orderValue(listOf("edge.example.com", SteamCdn.AKAMAI_HOST)))
+        assertEquals(
+            "client-update.fastly.steamstatic.com client-update.akamai.steamstatic.com",
+            SteamCdn.orderValue(listOf(SteamCdn.FASTLY_HOST, SteamCdn.AKAMAI_HOST)),
+        )
+    }
+
+    /**
+     * The menu the loading screen shows while a client download runs: the edges this run measured,
+     * fastest first, and both of them in the script's order when it measured nothing. "Automatic"
+     * is not a row of this list - it is the absence of a tap - so the list never contains it.
+     */
+    @Test
+    fun theMenuOffersTheMeasuredEdgesFastestFirst() {
+        try {
+            SteamCdn.setMeasured(
+                SteamCdn.AUTO, "1. Akamai 1.0 MB/s", listOf(SteamCdn.AKAMAI_HOST, SteamCdn.FASTLY_HOST),
+            )
+            assertEquals(listOf(SteamCdn.AKAMAI, SteamCdn.FASTLY), SteamCdn.choicesForSession())
+
+            SteamCdn.setOverride(SteamCdn.AUTO)
+            assertEquals(listOf(SteamCdn.FASTLY, SteamCdn.AKAMAI), SteamCdn.choicesForSession())
+        } finally {
+            SteamCdn.setOverride(SteamCdn.AUTO)
+        }
+    }
 }

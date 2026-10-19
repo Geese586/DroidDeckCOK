@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import com.droiddeck.launcher.BuildConfig
 import com.droiddeck.launcher.frontend.Library
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
@@ -103,48 +105,72 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
             }
         },
     )
-    LiftHero(
-        key = "steam", tabs = tabs,
-        onOpen = a.onSteamSettings, onPrimary = a.onPlay,
-        modifier = modifier.clipToBounds(),
-        start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
-        background = {
-            when {
-                // The mark wanders over this fade, so it sinks with the wall: drawn a little oversized,
-                // it still reaches the pane's edges at the sink's 0.95.
-                games.isEmpty() -> EmptyLibrary(avoid = words) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
-                games.size < WALL_MIN_GAMES -> CapsuleFan(games)
-                else -> CapsuleWall(games)
-            }
-        },
-        scrim = { if (games.size >= WALL_MIN_GAMES) WallFade() },
-        words = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.onPlaced { words = it.boundsInParent() },
-            ) {
-                Wordmark(if (narrow) 30.dp else 40.dp)
-                // Said only when something stands between Play and Steam; a ready runtime needs no words.
-                if (s.busy || !s.ready || (s.available != null && s.available != s.installed)) RuntimeChip(s)
-            }
-        },
-        button = { click ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Enabled without a runtime: the session's loading screen installs it first.
-                PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, large = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.testTag("play-steam"), onClick = click)
-                // The way in for a device whose network cannot fetch any of it: one folder holding
-                // the runtime, Proton and the Steam client, put in one after another. Shown while
-                // the folder last picked still holds something the device has not got, so a ready
-                // device never sees it.
-                if (s.firstLocalInstallNeeded) SecondaryButton(
-                    stringResource(R.string.first_local_install),
-                    enabled = !s.busy, compact = narrow,
-                    onClick = a.onFirstLocalInstall,
-                )
-            }
-        },
-        rows = { tab -> a.modeSheet(mode, tab, extras) },
-    )
+    Box(modifier.clipToBounds()) {
+        LiftHero(
+            key = "steam", tabs = tabs,
+            onOpen = a.onSteamSettings, onPrimary = a.onPlay,
+            modifier = Modifier.matchParentSize(),
+            start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
+            background = {
+                when {
+                    // The mark wanders over this fade, so it sinks with the wall: drawn a little oversized,
+                    // it still reaches the pane's edges at the sink's 0.95.
+                    games.isEmpty() -> EmptyLibrary(avoid = words) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
+                    games.size < WALL_MIN_GAMES -> CapsuleFan(games)
+                    else -> CapsuleWall(games)
+                }
+            },
+            scrim = { if (games.size >= WALL_MIN_GAMES) WallFade() },
+            words = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.onPlaced { words = it.boundsInParent() },
+                ) {
+                    Wordmark(if (narrow) 30.dp else 40.dp)
+                    // Said only when something stands between Play and Steam; a ready runtime needs no words.
+                    if (s.busy || !s.ready || (s.available != null && s.available != s.installed)) RuntimeChip(s)
+                }
+            },
+            button = { click ->
+                // Play stays exactly where it was, the same size; the measured start sits beside it
+                // at the same height, a gap apart, so the two read as one choice with two answers.
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Enabled without a runtime: the session's loading screen installs it first.
+                        PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, large = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.testTag("play-steam"), onClick = click)
+                        // The same session, with the client's two edges offered on its loading screen
+                        // so a line that crawls can be left for the other one in place. Nothing is
+                        // timed before it starts: on a network where both edges refuse the probe,
+                        // timing them cost every start and answered nothing. Play is untouched.
+                        SecondaryButton(
+                            stringResource(R.string.games_play_steam_advanced),
+                            enabled = !s.busy, large = true,
+                            modifier = Modifier.testTag("play-steam-advanced"),
+                            onClick = a.onPlayMeasured,
+                        )
+                    }
+                    // The way in for a device whose network cannot fetch any of it: one folder holding
+                    // the runtime, Proton and the Steam client, put in one after another. Shown while
+                    // the folder last picked still holds something the device has not got, so a ready
+                    // device never sees it.
+                    if (s.firstLocalInstallNeeded) SecondaryButton(
+                        stringResource(R.string.first_local_install),
+                        enabled = !s.busy, compact = narrow,
+                        onClick = a.onFirstLocalInstall,
+                    )
+                }
+            },
+            rows = { tab -> a.modeSheet(mode, tab, extras) },
+        )
+        // The fork's own version, top right where nothing else claims space: with builds passed
+        // around by hand the screen itself should say which one it is (e.g. "COK0.4.0.2").
+        Text(
+            "COK" + BuildConfig.FORK_VERSION,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+            modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
+        )
+    }
 }
 
 /** The wall fades out behind the words, and toward the bottom where the buttons sit. */

@@ -112,7 +112,7 @@ object DeckyManager {
         target.parentFile?.mkdirs()
         val temp = File(target.parentFile, "PluginLoader.download")
         val downloading = context.getString(R.string.user_apps_downloading, release.tag)
-        val ok = Downloader.downloadFile(release.url, temp, false) { f -> progress(downloading, if (f < 0) -1 else (f * 100).toInt().coerceIn(0, 100)) }
+        val ok = Downloader.downloadFile(release.url, temp, false) { _, f -> progress(downloading, if (f < 0) -1 else (f * 100).toInt().coerceIn(0, 100)) }
         if (!ok) { temp.delete(); return context.getString(R.string.deckymgr_download_failed) }
         if (temp.length() != release.size) { temp.delete(); return context.getString(R.string.deckymgr_size_mismatch) }
         val expected = release.digest?.substringAfter(':') ?: release.shaUrl?.let { checksumUrl ->
@@ -244,7 +244,7 @@ object DeckyManager {
             downloadingBinary = true
             progress(downloading, -1)
             val downloaded = try {
-                Downloader.downloadFile(url, temp, false) { fraction ->
+                Downloader.downloadFile(url, temp, false) { _, fraction ->
                     progress(downloading, if (fraction < 0) -1 else (fraction * 100).toInt().coerceIn(0, 100))
                 }
             } finally {

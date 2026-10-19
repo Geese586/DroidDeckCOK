@@ -969,6 +969,7 @@
     <string name="content_linux_desktop_hint">KDE Plasma, Firefox and your emulators</string>
     <string name="games_empty">Games you install in Steam show up here after the session.</string>
     <string name="games_play_steam">Play Steam</string>
+    <string name="games_play_steam_advanced">Advanced play</string>
     <string name="games_launch_settings">Launch settings</string>
     <string name="games_launch">Launch</string>
     <string name="games_files">Game files</string>
@@ -1809,7 +1810,7 @@
     <!-- Session loading screen -->
     <string name="loadstate_starting">Starting the session…</string>
     <!-- %1$d minutes, %2$02d seconds since the session started -->
-    <string name="loadstate_elapsed">%1$d:%2$02d elapsed · still working</string>
+    <string name="loadstate_elapsed">%1$d:%2$02d elapsed</string>
     <string name="loadstate_steam_update">Downloading the Steam client update · %1$s</string>
     <!-- %1$s is the client's own download progress, as it prints it -->
     <string name="loadstate_steam_client">Downloading the Steam client · %1$s</string>
@@ -2288,6 +2289,11 @@
     <string name="desktop_uninstall_title">Uninstall the desktop?</string>
     <string name="desktop_all_systems">All</string>
     <!-- Re-added by the DroidDeckCOK fork: its own keys, which upstream has no equivalent of. -->
+    <string name="load_source">Source: %1$s</string>
+    <string name="load_steam_line">Steam client line: %1$s</string>
+    <string name="load_steam_pick">Line</string>
+    <string name="load_steam_pick_auto">Automatic</string>
+    <string name="load_speed">Speed %1$s</string>
     <string name="load_title_runtime">Preparing the Linux runtime</string>
     <string name="load_title_session">Starting the session</string>
     <string name="load_title_steam">Checking Steam</string>
@@ -2329,7 +2335,7 @@
     <string name="desktop_lang_export_saved">Saved to %1$s</string>
     <string name="desktop_lang_export_failed">Could not write the desktop\'s language files</string>
     <string name="first_local_fonts">Fonts</string>
-    <string name="first_local_nothing_found">That folder holds nothing this can install: a linuxfs.tar.zst, a Proton .tar.zst, a steam-client folder, a desktop.tar.zst, a fonts folder, or a GPUDrivers folder of exported drivers.</string>
+    <string name="first_local_nothing_found">Offline file check failed. Please download the offline package from the net disks. Baidu Pan: https://pan.baidu.com/s/1PY7ow7K81tvcqq0AAj8uNQ, code 9527\nQuark: https://pan.quark.cn/s/3962c8e97fde, code DRMQ</string>
     <string name="first_local_all_installed">The runtime, Proton, the Steam client, the desktop and the GPU drivers are all in already.</string>
     <string name="first_local_no_space">Not enough free space: installing this folder needs about %1$s, and only %2$s is free.</string>
     <string name="first_local_failed">Step %1$d/%2$d · %3$s failed: %4$s</string>
@@ -2338,6 +2344,9 @@
     <string name="first_local_report_title">One-click install did not finish</string>
     <string name="first_local_crashed">The install stopped on an unexpected error: %1$s</string>
     <string name="first_local_stalled">%1$s has made no progress for %2$d minutes</string>
+    <string name="first_local_long_step">%1$s can take about ten minutes here. Please be patient and do not leave the app.</string>
+    <string name="first_local_client_manifest">The Steam client folder has no %1$s. That manifest is what every package is checked against, and the folder-only install downloads nothing: copy that file in beside the packages.</string>
+    <string name="first_local_client_missing">The Steam client folder is short %1$d of the files this step installs://n%2$s//nThis step only installs from the folder and never downloads; starting a Steam session fetches what is missing from Valve.</string>
     <string name="first_local_logs_save">Save log</string>
     <string name="first_local_logs_pick">Choose a folder for the install log</string>
     <string name="first_local_logs_saved">Log copied: %1$d files in %2$s</string>
@@ -2351,6 +2360,13 @@
     <string name="setup_download_source_official_hint">Fetched straight from GitHub.</string>
     <string name="setup_download_source_china_hint">Fetched through a GitHub accelerator. Use it when GitHub does not answer; a download cannot be resumed if it is interrupted.</string>
     <string name="setup_download_source_note">Applies to the runtime, the desktop and emulator catalogs, Proton builds, and DroidDeck\'s own updates.</string>
+    <!-- DroidDeckCOK: the mirror line test, shown as a Toast when the mainland mirror is picked
+         and when a Steam session starts with no runtime installed. It is what makes the mirror the
+         download then chooses a decision with a visible reason. -->
+    <string name="mirror_test_running">Testing mirror speed…</string>
+    <string name="mirror_test_title">Mirror speed test — fastest three</string>
+    <string name="mirror_test_line">%1$d. %2$s — %3$s</string>
+    <string name="mirror_test_none">Mirror speed test: no mirror answered</string>
     <string name="setup_steam_cdn">Steam client line</string>
     <string name="setup_steam_cdn_auto">Automatic</string>
     <string name="setup_steam_cdn_fastly">Fastly</string>
@@ -2369,6 +2385,15 @@
     <string name="setup_line_test_recommend_fastly">Fastly is clearly faster here - pin it as the Steam client line in Setup.</string>
     <string name="setup_line_test_recommend_akamai">Akamai is clearly faster here - pin it as the Steam client line in Setup.</string>
     <string name="setup_line_test_recommend_none">Neither line answered. Steam client installs from Valve will not work on this network - install the client from a folder fetched elsewhere.</string>
+    <!-- DroidDeckCOK: the same line test, but run at the moment a Steam client install is about to
+         start - a Toast, so it says the ranking and then what the ranking bought. -->
+    <string name="steam_line_test_running">Testing the Steam lines…</string>
+    <string name="steam_line_test_title">Steam lines measured · fastest first</string>
+    <string name="steam_line_test_line">%1$d. %2$s — %3$s</string>
+    <string name="steam_line_test_pinned">This install goes through %1$s (fastest measured)</string>
+    <string name="steam_line_test_auto">Only one edge answered, so the script keeps its own order and switches if that one refuses.</string>
+    <string name="steam_line_test_order">This install tries %1$s first and falls back to the other edge if it stalls.</string>
+    <string name="steam_line_test_none">Neither edge answered - this network may be blocking them. Try another network or an accelerator; a client already installed still plays.</string>
     <string name="setup_runtime_local">Install from file</string>
     <string name="setup_runtime_local_pick">Choose a runtime archive (linuxfs.tar.zst)</string>
     <string name="setup_runtime_local_unverified_title">Cannot check this file</string>

@@ -329,6 +329,13 @@ class SessionService : Service() {
 
         val root = LinuxRuntime.rootDir(this)
         val sessionRoot = LinuxRuntime.sessionRoot(this).apply { mkdirs() }
+        // A line tapped during the last run is spent, and it is cleared where the user starts a run
+        // (MainActivity.startSession), not here. This point is reached *after* the loading screen is
+        // up - and on a first run after the runtime has finished installing in front of it - so
+        // clearing here threw away a tap made on the very screen offering the choice: the first
+        // session's chips were visible, took taps, and the choice was gone by the time the install
+        // script read the file. A retry of the same run keeps it on purpose: the tap was the reason
+        // that run tried that edge.
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
         SessionFiles.stage(this, root)
@@ -411,12 +418,38 @@ class SessionService : Service() {
                 guest.add("BL_STEAM_LOCAL_DIR=" + it.absolutePath)
                 Log.i(TAG, "steam: installing from the local folder " + it.absolutePath)
             }
-            // DroidDeckCOK: the CDN the user picked in Setup, for the components the folder does
-            // not cover. Empty (automatic) sets nothing - the script reads an empty value as a
-            // host to use alone, which would be a failed install.
-            SteamCdn.guestValue(SteamCdn.current(this)).takeIf { it.isNotEmpty() }?.let {
-                guest.add("BL_STEAM_CDN=$it")
-                Log.i(TAG, "steam: CDN pinned to $it")
+        }
+        // The edge, for EVERY Steam session and not only the one that finds the client missing:
+        // droiddeck-session runs droiddeck-steam-install at the top of each of them, and that
+        // install answers to Valve's current manifest - an update of tens to hundreds of megabytes
+        // rides the same two edges, and it used to ride them unmeasured because this variable lived
+        // inside the "client missing" branch above.
+        //
+        // A pin - the user's choice in Setup, or a lead the numbers earned - is used alone, which
+        // is the script's rule for an override. Everything short of that is now an ORDER rather
+        // than nothing: the two edges the line test just timed, fastest first, the other kept as the
+        // fallback. That is what makes a 1.5x, 1.3x or 1.1x lead worth acting on - the old rule
+        // needed twice the speed before it chose at all, so a device measuring 1.0 MB/s and
+        // 675 KB/s downloaded through the slower edge while the report named the faster one.
+        if (steamHere) {
+            val pinned = SteamCdn.guestValue(SteamCdn.forSession(this))
+            if (pinned.isNotEmpty()) {
+                guest.add("BL_STEAM_CDN=$pinned")
+                Log.i(TAG, "steam: CDN pinned to $pinned")
+            } else {
+                SteamCdn.orderValue(SteamCdn.orderForSession()).takeIf { it.isNotEmpty() }?.let {
+                    guest.add("BL_STEAM_CDN_ORDER=$it")
+                    Log.i(TAG, "steam: CDN order $it")
+                }
+            }
+            // The advanced Play sells one thing: the download rides the edge you pick. On an
+            // installed client that download is normally the client's own bootstrapper's, which
+            // this app cannot steer - so the menu would be a row of chips that changes nothing.
+            // With this, droiddeck-steam-install brings the client up to date itself, through the
+            // same queue the chips move. Play never sets it and keeps costing nothing.
+            if (SessionState.lineMenu) {
+                guest.add("BL_STEAM_SYNC=1")
+                Log.i(TAG, "steam: the client update is fetched by the install, through this run's line")
             }
         }
         // Where the guest leaves a request for another session (the desktop's Steam launchers).
@@ -1883,6 +1916,8 @@ class SessionService : Service() {
         const val EXTRA_STEAM_UI = "steamUi"
         const val EXTRA_STEAM_URL = "steamUrl"
         const val EXTRA_GAME_ID = "gameId"
+        /** The loading screen offers the Steam client's edge menu (the "advanced play" button). */
+        const val EXTRA_LINE_MENU = "lineMenu"
 
         fun start(
             context: Context, mode: String = MODE_STEAM, program: String? = null,

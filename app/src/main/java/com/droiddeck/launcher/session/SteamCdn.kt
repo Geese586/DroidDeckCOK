@@ -67,4 +67,93 @@ object SteamCdn {
 
     /** The manifest's file name, the one small file every edge serves for a connectivity test. */
     const val MANIFEST = "steam_client_steamdeck_publicbeta_linuxarm64"
+
+    /**
+     * The edge the line test just measured fastest, for the install that is about to run. In memory
+     * and for one run only: it is not a setting, so it is never written to prefs and the menu never
+     * shows it - a measurement is the reason for one install, not a standing preference. Reset on
+     * every run that does not measure ([setOverride] with [AUTO]), so it cannot outlive the session
+     * it was made for and pin an edge months later.
+     */
+    @Volatile
+    private var measured = AUTO
+
+    /**
+     * The same run's numbers, as one line, already worded for the user. The Toast carries them the
+     * moment they are taken; the loading screen carries them again for as long as the install they
+     * were taken for lasts (see LoadingState), because "which line is this download using, and why"
+     * is a question asked while watching it, not in the three seconds before it starts. Empty
+     * whenever nothing was measured.
+     */
+    @Volatile
+    private var measuredReport = ""
+
+    /** Pins [choice] for the next install, or [AUTO] to go back to whatever Setup holds. */
+    fun setOverride(choice: String) {
+        measured = choice.takeIf { it in choices } ?: AUTO
+        // A choice made by hand, or the reset at the end of a run that measured nothing, leaves no
+        // numbers behind: the ranking belongs to the run it was measured for and to no other.
+        measuredReport = ""
+        measuredOrder = emptyList()
+    }
+
+    /**
+     * The measured order for the same one run: the two edges this device timed, fastest first.
+     * [measured] pins a single edge and is used alone, which is only ever right when one edge is in
+     * a different league - so everything short of that used to fall back to the script's own order,
+     * and a device whose edges measured 1.0 MB/s and 675 KB/s downloaded through the slow one while
+     * the report said the other was fastest. An order is the honest form of that measurement: the
+     * fastest edge is tried first and the other follows it when a host dies, which no pin allows.
+     */
+    @Volatile
+    private var measuredOrder: List<String> = emptyList()
+
+    /** Pins [choice], and keeps [report] - the ranking it came from - for the run it is for. */
+    fun setMeasured(choice: String, report: String, order: List<String> = emptyList()) {
+        measured = choice.takeIf { it in choices } ?: AUTO
+        measuredReport = report
+        measuredOrder = order
+    }
+
+    /** This run's measured ranking, or empty when it was not measured. */
+    fun report(): String = measuredReport
+
+    /** This run's measured order, fastest edge first; empty when it was not measured. */
+    fun orderForSession(): List<String> = measuredOrder
+
+    /**
+     * The menu the loading screen offers while a client download runs, fastest first: this run's
+     * measured order, or both edges in the script's own order when nothing was measured. As
+     * [FASTLY]/[AKAMAI] values, since that is what a tap writes - the hosts themselves never leave
+     * the app.
+     */
+    fun choicesForSession(): List<String> =
+        orderForSession().ifEmpty { hosts(AUTO) }.mapNotNull { host ->
+            when (host) {
+                FASTLY_HOST -> FASTLY
+                AKAMAI_HOST -> AKAMAI
+                else -> null
+            }
+        }
+
+    /**
+     * [orderForSession] as BL_STEAM_CDN_ORDER's value: both known edges, fastest first, or empty
+     * when the measurement did not cover both. A one-host order would be a pin without its reason -
+     * the script's own order at least switches edges when a host refuses a file - so only a full
+     * pair is ever passed. Hosts the app does not know are dropped rather than forwarded.
+     */
+    internal fun orderValue(order: List<String>): String {
+        val known = order.filter { it == FASTLY_HOST || it == AKAMAI_HOST }.distinct()
+        return if (known.size == 2) known.joinToString(" ") else ""
+    }
+
+    /** What an install starting right now should use: this run's measurement, else the setting. */
+    fun forSession(context: Context): String = resolved(current(context))
+
+    /**
+     * [forSession]'s decision, with the stored setting passed in: the measurement wins for the one
+     * run it was made for, and [AUTO] - the state nothing is measured in - falls through to the
+     * setting. Split out so the rule can be tested without a Context.
+     */
+    internal fun resolved(setting: String): String = measured.takeIf { it.isNotEmpty() } ?: setting
 }

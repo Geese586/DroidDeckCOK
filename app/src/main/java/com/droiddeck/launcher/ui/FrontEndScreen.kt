@@ -166,6 +166,14 @@ class FrontEndState(
 
 class FrontEndActions(
     val onPlay: () -> Unit,
+    /**
+     * Play, but time the two Steam edges first and let the faster one serve this run.
+     *
+     * The plain Play does not: it costs a couple of seconds before anything appears, and the user
+     * who needs that number is the one on a slow or unproxied line - somebody sitting behind an
+     * accelerator already knows the answer and should be in the session by now.
+     */
+    val onPlayMeasured: () -> Unit = {},
     val onPlayDesktopUi: () -> Unit,
     val onSteamGame: (Library.SteamGame) -> Unit,
     val onGameShortcut: (Library.SteamGame) -> Unit = {},

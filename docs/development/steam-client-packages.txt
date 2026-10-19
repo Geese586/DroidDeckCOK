@@ -140,7 +140,7 @@ Checksums
 Using it
 --------
 
-1. Put all 17 files (and the manifest, if the device has no network at all) in one folder - any
+1. Put all 17 files, and the manifest (see "Which path needs what" below), in one folder - any
    name, any location, but flat: the install reads that folder's own entries, not subfolders.
 2. Copy the folder to the device, e.g. /storage/emulated/0/Download/steam-client.
 3. DroidDeck -> Steam settings -> Steam client -> "From folder", and pick it.
@@ -150,3 +150,32 @@ Using it
 The row only appears while the client is missing. Repairing a client that is already installed
 is the "Repair Steam client" button above it - but note that a repair re-downloads from Valve
 rather than from the folder.
+
+
+Which path needs what
+---------------------
+
+"From folder" above is the online-capable one: given the folder it uses every component it finds
+and downloads the rest, so the manifest is optional there - Valve's own is read instead, and the
+folder's is the fallback for when Valve cannot be reached.
+
+The play page's "First-time local install" is the offline one and it needs the manifest. That path
+hands the folder over with localOnly set, which means it fetches nothing at all: no manifest, no
+component, no edge. The manifest is what the script verifies every package against, so a folder
+without one could only be turned into a download - over the very link the folder exists to avoid,
+on the path that exists for a device that has none. It is therefore refused before anything starts,
+with a message naming the file: "The Steam client folder has no
+steam_client_steamdeck_publicbeta_linuxarm64…". Keep the manifest in the bundle's steam-client\
+folder, and do not rename it: the script looks for exactly that name, so a copy taken from the other
+branch (steam_client_publicbeta_linuxarm64), or the same file saved as .txt by a browser, is not the
+file either side reads.
+
+
+It needs the components that manifest names as well, and it is refused before anything starts
+when one of them is not in the folder - naming up to four of them, with a count of how many are
+missing. Nothing is fetched on that path at any point: the manifest is the whole list this step
+installs from, and a component it does not cover is a message, never a download. The download
+for one belongs to the session - it starts with the same folder and without the offline switch,
+so it takes every component that is in the folder and fetches only the rest. A folder built from
+one manifest and topped up from another therefore still installs; only the first-time step
+insists the folder match the manifest it carries, because it has no network to fall back on.

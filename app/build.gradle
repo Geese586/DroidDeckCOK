@@ -101,11 +101,16 @@ android {
         // release DroidDeck makes as older than this build (see ui/UpdatesForkPage.kt).
         versionName "4.0"
         // This fork's own label: the upstream release above plus a fork-only fourth component, so
-        // "0.4.0.1" reads as "COK(0.4.0.1)" in the settings dialog and as "(COK0.4.0.1)" beside the
+        // "0.4.0.2" reads as "COK(0.4.0.2)" in the settings dialog and as "(COK0.4.0.2)" beside the
         // official version on the updates page. Kept out of the line above on purpose - a fourth
         // component can never collide with an upstream tag, and the packaging script names the APK
         // in dist/ after the line above, not after this.
-        buildConfigField "String", "FORK_VERSION", "\"0.4.0.1\""
+        //
+        // LEFT ALONE BY THE FORK'S OWN WORK. The number is the publisher's, not the author's: it is
+        // bumped when a release is cut, by whoever cuts it, and never as a side effect of a change.
+        // Bumping it here makes two different builds claim the same version or puts a number in
+        // front of users that no release was ever published under.
+        buildConfigField "String", "FORK_VERSION", "\"0.4.0.6\""
         buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
         buildConfigField "String", "SOURCE_COMMIT", "\"${sourceCommit}\""
         buildConfigField "int", "PR_NUMBER", "${prNumber}"
@@ -232,13 +237,42 @@ tasks.named('preBuild').configure { dependsOn(stageRuntimeAssets) }
 
 // Unit tests and previews remain usable without Docker. Packaging an APK requires the complete
 // runtime payload prepared by the local helper or CI, with matching sources and output hashes.
+//
+// The check itself needs an interpreter, and asking for one is the fragile part of this task:
+//   * the bare name "python3" is a trap on Windows - the App Execution Alias of that name is a
+//     Store stub whose run exits 9009 with no message, which is how bumping the version string
+//     came to abort a build that had nothing wrong with it;
+//   * launching a probe to find a working name is a process at *configuration* time, and when
+//     the stub is the one that answers, the caught exception still leaves Gradle a failed value
+//     source to serialize: the build then dies a second time with "configuration cache
+//     problems", so one broken alias could kill a build twice over.
+// So none of that happens at configuration time. The names below are looked up along PATH as
+// plain files (the Store alias directory is skipped), ordered so the stub is asked last, and no
+// process runs until the task does. On Windows "python" is the name a real install answers to;
+// "python3" there is usually either absent or the stub.
+def runtimeInputsPython = {
+    def windows = System.getProperty('os.name').toLowerCase().contains('windows')
+    def names = windows ? ['python.exe', 'py.exe', 'python3.exe'] : ['python3', 'python']
+    def dirs = (System.getenv('PATH') ?: '').split(File.pathSeparator)
+    for (name in names) {
+        for (dir in dirs) {
+            def at = (dir ?: '').replace('"', '').trim()
+            if (!at || at.toLowerCase().contains('windowsapps')) continue
+            def candidate = new File(at, name)
+            if (candidate.isFile()) return candidate.absolutePath
+        }
+    }
+    return windows ? 'python.exe' : 'python3'
+}()
+
 def verifyRuntimeInputs = tasks.register('verifyRuntimeInputs', Exec) {
     // The session scripts are re-copied into the asset tree by stageSessionScripts; with parallel
     // task execution this check once hashed a file mid-copy and failed a main build. Hash only
     // once the staging has finished.
     mustRunAfter(stageSessionScripts, stageRuntimeAssets)
     workingDir rootProject.projectDir
-    commandLine 'python3', 'tools/release/runtime_inputs.py', 'verify'
+    description = 'Checks the prepared runtime payload against tools/release/runtime_inputs.py record.'
+    commandLine runtimeInputsPython, 'tools/release/runtime_inputs.py', 'verify'
 }
 tasks.configureEach { task ->
     if (task.name in ['packageDebug', 'packageRelease']) task.dependsOn(verifyRuntimeInputs)

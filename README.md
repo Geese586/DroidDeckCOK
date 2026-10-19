@@ -79,6 +79,7 @@ DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve �
 **前三项是必需的**，缺任何一项设备都跑不起来；后三项可选，装不装都不影响按钮能用。上述文件合计约 **1.9 GiB**（不含第三方 Proton）。
 
 文件名**不需要改**——安装时按文件名识别（`linuxfs*`、`proton*`、`desktop*`、`steam-client\`、`fonts\`），也用原作自己的名字去核对。
+**唯一例外**是 `steam-client` 文件夹里那份 manifest（文件名 `steam_client_steamdeck_publicbeta_linuxarm64`）：**别改名、别删**，一键安装靠它离线校验 17 个包；缺了它那一步会直接报错，不会联网去拿。
 
 #### 手机上：整个 `FirstLocalInstall` 文件夹拷进内部存储
 

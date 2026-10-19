@@ -65,25 +65,36 @@ public final class Downloader {
      * length). {@code resume} continues a partial file with a Range request, which is what makes a
      * 790 MB download survive a dropped connection instead of starting over.
      *
-     * <p>Every candidate from {@link DownloadSource} is tried in turn. What one that fails part-way
-     * leaves behind is picked up by the next: where its server honours the Range request the
-     * download carries on from where it stopped, and where it ignores it - which the accelerators
-     * do - the 200 below is caught and the file is started again rather than appended to with the
-     * wrong bytes.
+     * <p>The candidates are tried in the order {@link DownloadSource#ranked} puts them - measured
+     * speed, fastest first - and {@code progress} is told which one is being read: its first
+     * argument is the candidate's host, arriving with a -1 fraction the moment a candidate starts
+     * (the "which mirror is this?" line before any byte moves) and riding along with every
+     * progress hop after that.
      */
     public static boolean downloadFile(String url, File destination, boolean resume,
                                        java.util.function.Consumer<Float> progress) {
-        List<String> candidates = DownloadSource.candidates(url);
+        return downloadFile(url, destination, resume, (source, fraction) -> {
+            if (progress != null) progress.accept(fraction);
+        });
+    }
+
+    public static boolean downloadFile(String url, File destination, boolean resume,
+                                       java.util.function.BiConsumer<String, Float> progress) {
+        // Ranked only when resuming is on the table - the installs that move hundreds of
+        // megabytes. A thumbnail or a plugin loader would spend longer being probed than fetched.
+        List<String> candidates = resume ? DownloadSource.ranked(url) : DownloadSource.candidates(url);
         for (int i = 0; i < candidates.size(); i++) {
+            if (progress != null) progress.accept(host(candidates.get(i)), -1f);
             if (downloadFileOnce(candidates.get(i), destination, resume, progress)) return true;
         }
         return false;
     }
 
     private static boolean downloadFileOnce(String url, File destination, boolean resume,
-                                            java.util.function.Consumer<Float> progress) {
+                                            java.util.function.BiConsumer<String, Float> progress) {
         HttpURLConnection connection = null;
         long have = resume && destination.isFile() ? destination.length() : 0;
+        String source = host(url);
         try {
             connection = open(url);
             if (have > 0) connection.setRequestProperty("Range", "bytes=" + have + "-");
@@ -118,11 +129,11 @@ public final class Downloader {
                     // enough to move a progress bar smoothly.
                     if (progress != null && written - lastReport > (1 << 20)) {
                         lastReport = written;
-                        progress.accept(total > 0 ? written / (float) total : -1f);
+                        progress.accept(source, total > 0 ? written / (float) total : -1f);
                     }
                 }
             }
-            if (progress != null) progress.accept(1f);
+            if (progress != null) progress.accept(source, 1f);
             return total <= 0 || written >= total;
         } catch (Exception e) {
             Log.w(TAG, "download " + url, e);
@@ -130,6 +141,15 @@ public final class Downloader {
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    /** The candidate's host, for the progress line: which mirror this download is on. */
+    public static String host(String url) {
+        try {
+            String host = new URL(url).getHost();
+            if (host != null) return host;
+        } catch (Exception e) { /* fall through to the raw URL */ }
+        return url;
     }
 
     private static HttpURLConnection open(String url) throws java.io.IOException {

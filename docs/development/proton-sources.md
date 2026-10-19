@@ -3,7 +3,9 @@
 Checked 2026-10-12 against each project's own release API (`api.github.com/repos/<owner>/<repo>/releases`)
 and against each component hub's own index — every asset name below was read back, none of it is recalled
 from the version numbers in a changelog. An Android/aarch64 device can only use a Proton that was built
-for **aarch64**, so that is the single filter this note applies.
+for **aarch64**, so that is the single filter this note applies. (The GE-Proton and DroidDeck-Proton rows
+were re-read on 2026-10-18 from the two archives now carried in `FirstLocalInstall/`; the cachyos row
+and everything below them still stand from the 10-12 check.)
 
 See also `steam-client-packages.txt` (component download speeds) and the archive at
 `00Design/custom-changes/README.md` (what this fork changed, in Chinese).
@@ -19,17 +21,24 @@ See also `steam-client-packages.txt` (component download speeds) and the archive
 
 | row | repo | newest tag | ARM64 asset | size |
 |---|---|---|---|---|
-| GE-Proton | `GloriousEggroll/proton-ge-custom` | `GE-Proton11-7` | `GE-Proton11-7-aarch64.tar.gz` | 645.8 MB |
+| GE-Proton | `GloriousEggroll/proton-ge-custom` | `GE-Proton11-9` | `GE-Proton11-9-aarch64.tar.gz` | 647.9 MB |
 | proton-cachyos | `CachyOS/proton-cachyos` | `cachyos-11.0-20261005-slr` | `proton-cachyos-11.0-20261005-slr-arm64.tar.xz` | 356.3 MB |
-| DroidDeck-Proton | `Droid-Deck/DroidDeck-Proton` | `DroidDeck-Proton-11-7.5` | `DroidDeck-Proton-11-7.5-aarch64.tar.gz` | 625.8 MB |
+| DroidDeck-Proton | `The412Banner/DroidDeck-Proton` | `DroidDeck-Proton-11-9.1` | `DroidDeck-Proton-11-9.1-aarch64.tar.gz` | 625.4 MB |
 
 Download URLs are the usual release paths:
 
 ```
-https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-7/GE-Proton11-7-aarch64.tar.gz
+https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-9/GE-Proton11-9-aarch64.tar.gz
 https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-11.0-20261005-slr/proton-cachyos-11.0-20261005-slr-arm64.tar.xz
-https://github.com/Droid-Deck/DroidDeck-Proton/releases/download/DroidDeck-Proton-11-7.5/DroidDeck-Proton-11-7.5-aarch64.tar.gz
+https://github.com/The412Banner/DroidDeck-Proton/releases/download/DroidDeck-Proton-11-9.1/DroidDeck-Proton-11-9.1-aarch64.tar.gz
 ```
+
+**2026-10-18**: the two rows above are the two archives now carried in `FirstLocalInstall/` — the
+`GE-Proton11-7` and `DroidDeck-Proton-11-7.5` they replace have been removed from it. The one-key
+install reads the **newest** archive of each build by the numbers in its name rather than the first
+name the listing sorts to, and a build is counted as already in only when what is installed is that
+version or newer, so a folder that gains an archive still installs it (see Z ㉙ in
+`00Design/custom-changes/README.md`).
 
 **DroidDeck-Proton** is this project's own build and the only one written for it: GE-Proton as the base
 (the `proton` script, DXVK, vkd3d-proton, FEX, protonfixes and the media stack are GE's, unchanged) with
@@ -157,8 +166,17 @@ Tool(id, displayName, dirPrefix, "owner/repo", Regex("…"))
 * the `Regex` also decides which file in a one-key-install folder is this row's build.
 
 `installed()` compares `dirPrefix` with `startsWith`, so **the prefix has to survive what the tarball
-calls itself**. GE unpacks to `GE-Proton11-7`; DroidDeck-Proton unpacks to `DroidDeck-Proton 11-7.5` —
-a **space**, not a hyphen. `"DroidDeck-Proton"` covers both spellings; `"DroidDeck-Proton-11"` would not.
+calls itself**. GE unpacks to `GE-Proton11-9-aarch64` (the directory keeps the arch, `tar -tf | head -1`
+says so); DroidDeck-Proton unpacks to `DroidDeck-Proton 11-9.1` — a **space**, not a hyphen.
+`"DroidDeck-Proton"` covers both spellings; `"DroidDeck-Proton-11"` would not.
+
+Which archive of a build the one-key install takes is decided by the **numbers** in the names, not by
+the names: `FirstLocalInstall.found` keeps the newest per row (`ProtonExtras.compareVersions`), and a
+build counts as already in only when the installed version is that one or newer
+(`FirstLocalInstall.holdsBuild`). The three vendors spell the same build three ways — the archive is
+`DroidDeck-Proton-11-9.1-aarch64.tar.gz`, its directory is `DroidDeck-Proton 11-9.1`, and GE's
+directory repeats the arch — so `versionKey` (which drops `aarch64`/`arm64`) is what compares them:
+`[11,9,1]`, `[11,9,1]` and `[11,9]` + `[11,9]`.
 
 The guest script that does the unpacking, `usr/local/bin/droiddeck-proton-extra`, carries its own
 `SOURCES` map with only `ge` and `cachyos`. That is the *manual* entry point
@@ -179,7 +197,7 @@ tarball plus the tree it unpacks to both have to fit.
   anyway?" dialog asks instead. `proton_local_wrong_build` is now unreferenced but kept — it is defined in
   all seven complete languages and deleting it would mean touching seven files for no gain.
 * **GE's pattern also matches a DroidDeck-Proton file name**: `aarch64\.tar\.(gz|xz)$` fits
-  `DroidDeck-Proton-11-7.5-aarch64.tar.gz`. What keeps the two apart is `dirPrefix`, which the one-key
+  `DroidDeck-Proton-11-9.1-aarch64.tar.gz`. What keeps the two apart is `dirPrefix`, which the one-key
   install tests together with the pattern.
 * **A Proton installed on one row and looked for on another** — the archive unpacks to its own directory
   name, so dropping a DroidDeck-Proton tarball on the GE row installs a working tool Steam will list while

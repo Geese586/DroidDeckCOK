@@ -20,6 +20,7 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -341,10 +342,13 @@ public final class LinuxRuntimeInstaller {
             emptyTrash(LinuxRuntime.rootDir(context).getParentFile());
             String downloading = context.getString(R.string.rtinst_downloading);
             if (listener != null) listener.onProgress(Step.DOWNLOADING, downloading, 0);
-            // Downloader reports a 0..1 fraction, or -1 while the total size is unknown.
-            boolean ok = Downloader.downloadFile(release.url, archive, true, (fraction) -> {
+            // Downloader reports a 0..1 fraction, or -1 while the total size is unknown; the
+            // source argument is the host the bytes are coming from, named in the stage so a
+            // download that sits still says which mirror is stalling rather than just "0%".
+            boolean ok = Downloader.downloadFile(release.url, archive, true, (source, fraction) -> {
                 if (listener != null) {
-                    listener.onProgress(Step.DOWNLOADING, downloading,
+                    String stage = source == null ? downloading : downloading + " · " + source;
+                    listener.onProgress(Step.DOWNLOADING, stage,
                             fraction < 0 ? -1 : Math.round(fraction * 100f));
                 }
             });
@@ -428,13 +432,13 @@ public final class LinuxRuntimeInstaller {
                 return false;
             }
             File pendingRemoval = removalDirectory(LinuxRuntime.rootDir(context));
-            if (pendingRemoval.exists() && listener != null) listener.onProgress("Removing runtime leftovers", -1);
+            if (pendingRemoval.exists() && listener != null) listener.onProgress(context.getString(R.string.rtinst_removing_leftovers), -1);
             RuntimeFileTree.delete(pendingRemoval, null);
 
             String version = catalogue != null ? catalogue.version : null;
             String expected = catalogue != null ? catalogue.sha256 : null;
             if (expected != null && !expected.isEmpty()) {
-                if (listener != null) listener.onProgress("Verifying", -1);
+                if (listener != null) listener.onProgress(context.getString(R.string.rtinst_verifying), -1);
                 String actual = Hashes.sha256(archive);
                 if (!expected.equalsIgnoreCase(actual)) {
                     Log.w(TAG, "local archive checksum mismatch: wanted " + expected + ", got " + actual);
@@ -472,7 +476,7 @@ public final class LinuxRuntimeInstaller {
         recoverInterruptedSwap(root, staging, old);
         RuntimeFileTree.delete(staging, null);
         if (!staging.mkdirs()) return false;
-        if (listener != null) listener.onProgress("Extracting", -1);
+        if (listener != null) listener.onProgress(context.getString(R.string.rtinst_extracting), -1);
         if (!extract(context, archive, staging, listener)) {
             RuntimeFileTree.delete(staging, null);
             return false;
@@ -645,13 +649,25 @@ public final class LinuxRuntimeInstaller {
      * rootfs is full of hard links (one binary under several names), and an entry written as an
      * empty file instead of its link target is a rootfs that boots to nothing. Symlinks, hard
      * links and the executable bit are all carried over here.
+     *
+     * <p>Progress is a percentage of the archive actually read, counted in compressed bytes rather
+     * than in entries. A rootfs is a few hundred thousand files, and a screen that only hears about
+     * every 2000th one of them - with no number on any of them - shows one frozen line for minutes
+     * while the unpack is working exactly as intended. Which of the two that is cannot be told
+     * apart from the outside, and it was reported as a hang (DroidDeckCOK). Bytes move while the
+     * stream is consumed, so the number creeps the whole way through, including inside one large
+     * file; a percentage that stops moving is then a real stall rather than a reporting gap.
      */
     public static boolean extract(Context context, File archive, File destination, ProgressListener listener) {
-        long entries = 0;
         String extracting = context.getString(R.string.rtinst_extracting);
-        try (InputStream in = new ZstdCompressorInputStream(
-                new BufferedInputStream(new FileInputStream(archive), 1 << 16));
-             TarArchiveInputStream tar = new TarArchiveInputStream(in)) {
+        long total = Math.max(1L, archive.length());
+        // What has been reported so far, and when: written by reportRead, kept in arrays because the
+        // copy loop below ticks from inside a lambda-free inner block.
+        long[] shown = {-1L};
+        long[] at = {0L};
+        try (Counting counting = new Counting(new FileInputStream(archive));
+             TarArchiveInputStream tar = new TarArchiveInputStream(
+                     new ZstdCompressorInputStream(new BufferedInputStream(counting, 1 << 16)))) {
             TarArchiveEntry entry;
             while ((entry = tar.getNextTarEntry()) != null) {
                 // Refuse anything that would land outside the runtime directory.
@@ -692,20 +708,85 @@ public final class LinuxRuntimeInstaller {
                     try (OutputStream out = new FileOutputStream(file)) {
                         byte[] buffer = new byte[1 << 16];
                         int read;
-                        while ((read = tar.read(buffer)) != -1) out.write(buffer, 0, read);
+                        int chunks = 0;
+                        while ((read = tar.read(buffer)) != -1) {
+                            out.write(buffer, 0, read);
+                            // Roughly every four megabytes, so one large file moves the number too:
+                            // the per-entry tick below is silent for the whole of a 500 MB one.
+                            if ((++chunks & 63) == 0) {
+                                reportRead(listener, extracting, counting.count, total, shown, at);
+                            }
+                        }
                     }
                     if ((entry.getMode() & 0111) != 0) file.setExecutable(true, false);
                 } else {
                     continue; // device nodes and fifos: the runtime binds the real ones
                 }
-                if (++entries % 2000 == 0 && listener != null) {
-                    listener.onProgress(extracting, -1);
-                }
+                reportRead(listener, extracting, counting.count, total, shown, at);
             }
+            // The archive's tail padding can leave the count just short of its length; the unpack
+            // is over, so the bar is finished rather than left a per cent from the end.
+            reportRead(listener, extracting, total, total, shown, at);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "extract", e);
             return false;
+        }
+    }
+
+    /** How often an unpack may re-report while its percentage creeps: five times a second. */
+    private static final long PROGRESS_NS = 200_000_000L;
+
+    /**
+     * Reports how far into {@code total} bytes the read has got, forwards only and at most
+     * {@link #PROGRESS_NS} apart.
+     *
+     * <p>Forward-only on purpose: an extractor that goes quiet is what a stall looks like from the
+     * screen, and the run's own watchdog reads these reports as its heartbeat - so repeats would
+     * keep a wedged unpack looking alive.
+     */
+    private static void reportRead(ProgressListener listener, String stage, long read, long total,
+                                   long[] shown, long[] at) {
+        if (listener == null || total <= 0) return;
+        long now = System.nanoTime();
+        int percent = (int) Math.min(100L, read * 100L / total);
+        if (percent <= shown[0]) return;
+        if (percent < 100 && now - at[0] < PROGRESS_NS) return;
+        shown[0] = percent;
+        at[0] = now;
+        listener.onProgress(stage, percent);
+    }
+
+    /**
+     * The bytes the decompressor has taken off the archive, which is what {@link #extract}'s
+     * percentage is measured in: the uncompressed size is not known before the tar ends.
+     */
+    private static final class Counting extends FilterInputStream {
+        long count;
+
+        Counting(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = in.read();
+            if (b >= 0) count++;
+            return b;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = in.read(buffer, offset, length);
+            if (read > 0) count += read;
+            return read;
+        }
+
+        @Override
+        public long skip(long n) throws IOException {
+            long skipped = in.skip(n);
+            if (skipped > 0) count += skipped;
+            return skipped;
         }
     }
 }

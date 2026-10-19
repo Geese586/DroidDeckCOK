@@ -892,6 +892,7 @@
     <string name="content_linux_desktop_hint">KDE Plasma、Firefox、エミュレーター</string>
     <string name="games_empty">Steamでインストールされたゲームは、セッション終了後にここに表示されます。</string>
     <string name="games_play_steam">Steamを実行</string>
+    <string name="games_play_steam_advanced">回線を選んで起動</string>
     <string name="games_launch_settings">起動設定</string>
     <string name="games_launch">起動</string>
     <string name="games_files">ゲームファイル</string>
@@ -1793,7 +1794,7 @@
     <string name="loadstate_starting">セッションを開始中…</string>
 
     <!-- %1$d minutes, %2$02d seconds since the session started -->
-    <string name="loadstate_elapsed">%1$d:%2$02d 経過 · 処理中</string>
+    <string name="loadstate_elapsed">%1$d:%2$02d 経過</string>
     <string name="loadstate_steam_update">Steamクライアントのアップデートをダウンロード中 · %1$s</string>
 
     <!-- %1$s is the client's own download progress, as it prints it -->
@@ -2089,6 +2090,11 @@
         <item quantity="other">%1$d 本はすでにゲームにあります</item>
     </plurals>
     <!-- Re-added by the DroidDeckCOK fork: its own keys, which upstream has no equivalent of. -->
+    <string name="load_source">ダウンロード元: %1$s</string>
+    <string name="load_steam_line">Steam クライアントの経路: %1$s</string>
+    <string name="load_steam_pick">経路</string>
+    <string name="load_steam_pick_auto">自動</string>
+    <string name="load_speed">速度 %1$s</string>
     <string name="load_title_runtime">Linux ランタイムを準備しています</string>
     <string name="load_title_session">セッションを開始しています</string>
     <string name="load_title_steam">Steam を確認しています</string>
@@ -2139,6 +2145,9 @@
     <string name="first_local_report_title">一括インストールが完了しませんでした</string>
     <string name="first_local_crashed">予期しないエラーでインストールが中断しました：%1$s</string>
     <string name="first_local_stalled">%1$s は %2$d 分間進んでいません</string>
+    <string name="first_local_long_step">%1$s はここで10分ほどかかることがあります。そのままお待ちください（アプリを終了しないでください）。</string>
+    <string name="first_local_client_manifest">Steam クライアントのフォルダに %1$s がありません。オフラインインストールはこのマニフェストで各パッケージを検証し、ダウンロードは一切行いません。パッケージと同じフォルダに入れてください。</string>
+    <string name="first_local_client_missing">Steam クライアントのフォルダに、この手順で必要なファイルが %1$d 個足りません：\n%2$s\nこの手順はフォルダ内だけでインストールし、ダウンロードは一切行いません。「STEAM をプレイ」を開始すると Valve から不足分を取得します。</string>
     <string name="first_local_logs_save">ログを保存</string>
     <string name="first_local_logs_pick">インストールログの保存先フォルダを選択</string>
     <string name="first_local_logs_saved">ログをコピーしました：%2$s に %1$d 件</string>
@@ -2152,6 +2161,13 @@
     <string name="setup_download_source_official_hint">GitHub から直接ダウンロードします。</string>
     <string name="setup_download_source_china_hint">GitHub アクセラレータ経由でダウンロードします。GitHub に接続できないときに使用します。中断すると再開できません。</string>
     <string name="setup_download_source_note">ランタイム、デスクトップとエミュレータのカタログ、Proton ビルド、DroidDeck 本体の更新に適用されます。</string>
+    <!-- DroidDeckCOK: English on purpose - the fork translates this feature for English, Simplified
+         and Traditional Chinese only, and the key has to exist in every locale the archive keeps
+         complete. Same for values-ko and values-es. -->
+    <string name="mirror_test_running">Testing mirror speed…</string>
+    <string name="mirror_test_title">Mirror speed test — fastest three</string>
+    <string name="mirror_test_line">%1$d. %2$s — %3$s</string>
+    <string name="mirror_test_none">Mirror speed test: no mirror answered</string>
     <string name="setup_steam_cdn">Steam クライアントの経路</string>
     <string name="setup_steam_cdn_auto">自動</string>
     <string name="setup_steam_cdn_fastly">Fastly</string>
@@ -2170,6 +2186,14 @@
     <string name="setup_line_test_recommend_fastly">Fastly が明らかに速いため、Steam クライアントの経路として固定してください。</string>
     <string name="setup_line_test_recommend_akamai">Akamai が明らかに速いため、Steam クライアントの経路として固定してください。</string>
     <string name="setup_line_test_recommend_none">どちらの経路も応答しません。このネットワークでは Valve から Steam クライアントをインストールできません。別の場所で取得したフォルダからインストールしてください。</string>
+    <!-- DroidDeckCOK: Steam クライアントのインストール直前に出る同じ経路テスト（Toast）。英語のまま。 -->
+    <string name="steam_line_test_running">Testing the Steam lines…</string>
+    <string name="steam_line_test_title">Steam lines measured · fastest first</string>
+    <string name="steam_line_test_line">%1$d. %2$s — %3$s</string>
+    <string name="steam_line_test_pinned">This install goes through %1$s (fastest measured)</string>
+    <string name="steam_line_test_auto">Only one edge answered, so the script keeps its own order and switches if that one refuses.</string>
+    <string name="steam_line_test_order">This install tries %1$s first and falls back to the other edge if it stalls.</string>
+    <string name="steam_line_test_none">Neither edge answered, so the client can only come from a local folder.</string>
     <string name="setup_runtime_local">ファイルからインストール</string>
     <string name="setup_runtime_local_pick">ランタイムのアーカイブを選択（linuxfs.tar.zst）</string>
     <string name="setup_runtime_local_unverified_title">このファイルを検証できません</string>

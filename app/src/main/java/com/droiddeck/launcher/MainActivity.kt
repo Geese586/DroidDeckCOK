@@ -52,9 +52,11 @@ import com.droiddeck.launcher.session.SessionPrefs
 import com.droiddeck.launcher.session.SteamClient
 import com.droiddeck.launcher.session.SteamCdn
 import com.droiddeck.launcher.session.SteamCdnProbe
+import com.droiddeck.launcher.session.SteamLineSwitch
 import com.droiddeck.launcher.session.SteamRepair
 import com.droiddeck.launcher.core.CpuCores
 import com.droiddeck.launcher.core.DownloadSource
+import com.droiddeck.launcher.core.MirrorTest
 import com.droiddeck.launcher.core.PhantomProcessLimit
 import com.droiddeck.launcher.core.PhantomProcessStatus
 import com.droiddeck.launcher.core.WirelessAdbFix
@@ -200,6 +202,9 @@ class MainActivity : ComponentActivity() {
     private var prootFastPath by mutableStateOf(true)
     /** The one-click install's last report, on screen until it is dismissed: a Toast was too short. */
     private var firstLocalReport by mutableStateOf<String?>(null)
+
+    /** The wrong-folder notice of the one-click install, kept on screen instead of a tiny Toast. */
+    private var firstLocalHint by mutableStateOf<String?>(null)
     private var guestHostname by mutableStateOf(SessionPrefs.DEFAULT_GUEST_HOSTNAME)
     private var phantomWarning by mutableStateOf<String?>(null)
     private var phantomProcessStatus by mutableStateOf(PhantomProcessStatus.NOT_APPLICABLE)
@@ -215,6 +220,8 @@ class MainActivity : ComponentActivity() {
     private var steamCdn by mutableStateOf(com.droiddeck.launcher.session.SteamCdn.AUTO)
     private var steamLineTestBusy by mutableStateOf(false)
     private var steamLineTestEdges by mutableStateOf<List<com.droiddeck.launcher.session.SteamCdnProbe.Edge>?>(null)
+    /** One mirror measurement at a time; a second tap while one runs is ignored rather than queued. */
+    @Volatile private var mirrorTestBusy = false
     private var gameStoresEnabled by mutableStateOf(true)
     private var gameStoresSpeedTier by mutableStateOf("fast")
     private var storesOpenTab by mutableStateOf(SessionPrefs.STORES_OPEN_LIBRARY)
@@ -822,6 +829,13 @@ class MainActivity : ComponentActivity() {
                     ),
                     FrontEndActions(
                         onPlay = { startSteamSession() },
+                        // The same session, with the edge menu on its loading screen: the button for
+                        // a user whose line is the thing in doubt, who wants to see and change the
+                        // edge instead of trusting whatever the script picked. It used to time the
+                        // two edges first; on a device where neither edge answers that cost seconds
+                        // and ended in a Toast saying the client could only come from a folder, so
+                        // the timing is gone and the menu is the whole of what this button adds.
+                        onPlayMeasured = { startSteamSession(lineMenu = true) },
                         // The client's desktop UI, with gamescope's Deck integration disabled.
                         onPlayDesktopUi = {
                             startSession(Intent(this, SessionActivity::class.java)
@@ -1002,9 +1016,21 @@ class MainActivity : ComponentActivity() {
                         onDownloadSource = { id ->
                             DownloadSource.set(this, id)
                             downloadSource = id
+                            // Picking the mainland mirror is the user asking to be routed through
+                            // one of these; measuring here is what makes the mirror the download
+                            // then picks something they were shown the reason for. Picking the
+                            // direct source drops the measurement, so the next mainland pick
+                            // measures afresh rather than believing an order from the old source.
+                            if (id == DownloadSource.CHINA) runMirrorTest()
+                            else DownloadSource.forget()
                         },
                         onSteamCdn = { id ->
                             com.droiddeck.launcher.session.SteamCdn.set(this, id)
+                            // A deliberate pick outranks whatever the last line test measured:
+                            // the measurement is the reason for one install, not a veto over the
+                            // user - and it is dropped here so no later install can be pinned by
+                            // an edge this change has just superseded.
+                            SteamCdn.setOverride(SteamCdn.AUTO)
                             steamCdn = id
                         },
                         onSteamLineTest = { runSteamLineTest() },
@@ -1168,6 +1194,14 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { firstLocalReport = null },
                     )
                 }
+                // A pick that found nothing: the download addresses have to stay on screen long
+                // enough to be copied, so a dialog, not the Toast this used to be.
+                firstLocalHint?.let { hint ->
+                    com.droiddeck.launcher.ui.FirstLocalHintDialog(
+                        text = hint,
+                        onDismiss = { firstLocalHint = null },
+                    )
+                }
                 flood?.let { f -> com.droiddeck.launcher.ui.LaunchFlood(f.from, onProgress = { floodProgress = it }) { launchFlooded(f) } }
                 returning?.let { r ->
                     com.droiddeck.launcher.ui.FloodReturn(androidx.compose.ui.graphics.Color(r.color), r.to, onProgress = { floodProgress = it }) {
@@ -1224,8 +1258,13 @@ class MainActivity : ComponentActivity() {
         if (SessionPrefs.runSteamAtStartup(this) && !isFinishing && !isDestroyed) startSteamSession()
     }
 
-    private fun startSteamSession() {
-        startSession(Intent(this, SessionActivity::class.java), steamSession = true)
+    /**
+     * @param lineMenu puts the edge menu on the loading screen, so this run's download can be moved
+     *   to the other edge by hand. Off for the plain Play, which keeps its old shape: no menu, no
+     *   wait, nothing new on screen.
+     */
+    private fun startSteamSession(lineMenu: Boolean = false) {
+        startSession(Intent(this, SessionActivity::class.java), steamSession = true, lineMenu = lineMenu)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -2030,8 +2069,16 @@ class MainActivity : ComponentActivity() {
         install(release)
     }
 
-    /** Starts a session; with no runtime on a non-Adreno, the same warning Setup gives comes first, before any download. */
-    private fun startSession(intent: Intent, steamSession: Boolean = false): Boolean {
+    /**
+     * Starts a session; with no runtime on a non-Adreno, the same warning Setup gives comes first, before any download.
+     *
+     * @param lineMenu only the separate "advanced play" button turns this on (see [startSteamSession]):
+     *   it asks the loading screen for the edge menu, so a line that turns out to crawl can be left
+     *   for the other one without leaving the session. Nothing is timed before the session starts -
+     *   a measurement that answers "neither edge" on a whole class of devices delayed every one of
+     *   those starts and told the user nothing they could act on.
+     */
+    private fun startSession(intent: Intent, steamSession: Boolean = false, lineMenu: Boolean = false): Boolean {
         if (busy || LinuxRuntimeInstaller.isBusy()) return false
         refreshPhantomStatus()
         if (steamSession && PhantomProcessLimit.blocksSteam(phantomProcessStatus)) {
@@ -2040,6 +2087,22 @@ class MainActivity : ComponentActivity() {
         }
         val warn = installed == null && !com.droiddeck.launcher.core.DeviceSupport.adreno()
         if (warn && available != null) { showNonAdreno = available; return false }
+        // A Steam session with no runtime means the next thing on screen is a 790 MB download, and
+        // this is the one moment where the mirror it goes through is worth minutes rather than
+        // seconds. Measured before the session starts, so the number is up before the bytes move;
+        // the download waits on that measurement instead of racing it (DownloadSource.ranked), so
+        // the mirror the Toast names is the mirror the download uses. With the runtime already in
+        // place there is nothing big to fetch and a report would explain a choice nobody is making.
+        if (steamSession && installed == null && DownloadSource.current(this) == DownloadSource.CHINA) runMirrorTest()
+        // The last run's tap is spent - a line chosen for a download that is over must not decide
+        // this one. Cleared here, where the run begins, rather than when the session service gets
+        // going: that is after the loading screen is on screen, so a tap made on that screen would
+        // have been erased by its own start (see SteamLineSwitch).
+        if (lineMenu) intent.putExtra(SessionService.EXTRA_LINE_MENU, true)
+        // Nothing outranks the setting for this run: whatever the line test left in memory was a
+        // reason for the run it was made in, not for this one.
+        SteamCdn.setOverride(SteamCdn.AUTO)
+        SteamLineSwitch.clear(this)
         startActivity(intent)
         return true
     }
@@ -2138,23 +2201,240 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Times both of Valve's client-update edges from this network (Setup › Diagnostics). Nothing
-     * is pinned or remembered by it: the numbers are shown, and the CDN choice on the Launcher
-     * tab is the user's to make from them. The probe touches nothing but the network, and a
-     * second tap while one is running is ignored rather than queued.
+     * A measured report, drawn by us instead of by the platform. The platform's toast lays a
+     * message out in a short box and ellipsises what does not fit - two lines on the ROM this app
+     * runs on - so a report whose whole point is the ranked rows loses exactly the rows it exists
+     * for: the first one survives, the rest never arrive. So the same [android.widget.Toast] is
+     * given a view of our own, a [android.widget.TextView] the platform sizes to its content, and
+     * every line shows.
+     *
+     * Still a real Toast, and that is the reason for not using a view in this activity's window:
+     * the Steam line report is shown the moment before the session activity comes up, and anything
+     * belonging to this window is covered by it. A toast floats over it. Built here rather than
+     * inflated from a layout because all it needs is text and its own rounded card, in colours of
+     * its own so it reads the same over the launcher, the loading screen and a game.
+     *
+     * Custom toast views still draw one reason further: this app targets API 28, and the
+     * restrictions that make them unreliable from API 30 on are keyed off a target of R or newer.
      */
-    private fun runSteamLineTest() {
-        if (steamLineTestBusy) return
+    @Suppress("DEPRECATION")
+    private fun showReportToast(text: CharSequence) {
+        // Gravity deliberately left alone: a toast's default is bottom-centre, and asking for it
+        // again would be answered with "setGravity() shouldn't be called on text toasts" on the
+        // builds that classify a TextView-carrying toast as one.
+        showToast(reportToast(text), text)
+    }
+
+    /** The card [showReportToast] and [showLongToast] both draw, and nothing else. */
+    @Suppress("DEPRECATION")
+    private fun reportToast(text: CharSequence): android.widget.Toast {
+        val density = resources.displayMetrics.density
+        val pad = (16 * density).toInt()
+        val view = android.widget.TextView(this).apply {
+            setText(text)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(pad, pad, pad, pad)
+            // Wide enough for a row like "1. Fastly - 3.2 MB/s" without stretching across a
+            // handheld's screen, and tall enough for as many rows as a report carries.
+            maxWidth = (360 * density).toInt()
+            setLineSpacing(4 * density, 1f)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12 * density
+                setColor(0xE6212121.toInt())
+            }
+        }
+        return android.widget.Toast(this).apply {
+            duration = android.widget.Toast.LENGTH_LONG
+            this.view = view
+        }
+    }
+
+    /** Shows [toast], or the platform's own text toast when this ROM refuses the view. */
+    private fun showToast(toast: android.widget.Toast, text: CharSequence) {
+        try {
+            toast.show()
+        } catch (error: RuntimeException) {
+            // A ROM that refuses the custom view still has to say it.
+            Log.w(TAG, "report toast refused: ${error.message}")
+            android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * A toast the user has to have time to read: the report's card, held for [holdMs] instead of the
+     * platform's three and a half seconds.
+     *
+     * Two ways, in order. The platform's own duration field is set directly, which is honoured for
+     * the same reason the card is ours at all - this app targets API 28, and the restrictions on
+     * both are keyed off a target of R or newer. A ROM that has closed that door is answered the
+     * other way round: a fresh card every few seconds until the hold is up, so the message is on
+     * screen for as long as it was asked for either way.
+     *
+     * Put up *before* the work it warns about, by a caller that waits for this to return: the work
+     * that follows is minutes of proot, and a card enqueued once that has the machine may not arrive
+     * at all. A ROM that clamps the duration anyway still leaves it up for the platform's own long
+     * duration, which is late rather than never - and never before the work, which is the part that
+     * matters.
+     */
+    private fun showLongToast(text: CharSequence, holdMs: Long) {
+        val first = reportToast(text)
+        // Read back before it is shown: the re-showing path below is for a field that would not
+        // take, and a ROM with no such field is answered without asking it anything else.
+        val held = holdFor(first, holdMs)
+        showToast(first, text)
+        if (held) return
+        val again = object : Runnable {
+            private var left = holdMs - TOAST_REPEAT_MS
+            override fun run() {
+                if (left <= 0 || isFinishing || isDestroyed) return
+                left -= TOAST_REPEAT_MS
+                showToast(reportToast(text), text)
+                ui.postDelayed(this, TOAST_REPEAT_MS)
+            }
+        }
+        ui.postDelayed(again, TOAST_REPEAT_MS)
+    }
+
+    /**
+     * Sets a toast's own duration field and says whether the ROM took it. Read back rather than
+     * trusted, so the caller can fall back instead of believing a number that never landed.
+     */
+    private fun holdFor(toast: android.widget.Toast, holdMs: Long): Boolean = runCatching {
+        val field = android.widget.Toast::class.java.getDeclaredField("mDuration")
+        field.isAccessible = true
+        field.setInt(toast, holdMs.toInt())
+        field.getInt(toast).toLong() == holdMs
+    }.getOrDefault(false)
+
+    /**
+     * Times both of Valve's client-update edges from this network, fastest first, and hands the one
+     * the numbers justify pinning to [onDone] ([SteamCdn.AUTO] when they justify nothing).
+     *
+     * Two callers, one measurement. Setup › Diagnostics wants the numbers in a dialog, because the
+     * user is about to pin an edge from them. A Steam session about to fetch a client that is not
+     * there yet wants them as a Toast, because that is the moment the choice costs minutes: the
+     * numbers on screen are the reason for the edge the install then uses, and the ranking is
+     * applied rather than reported - see [SteamCdn.setOverride]. The probe touches nothing but the
+     * network, and a second call while one is running answers with no measurement rather than
+     * queueing behind it.
+     */
+    private fun runSteamLineTest(showDialog: Boolean = true, onDone: ((String) -> Unit)? = null) {
+        if (steamLineTestBusy) {
+            // Someone else's measurement is in flight: this run is not measured, so it starts from
+            // the setting, and neither the other run's ranking nor its pin is inherited.
+            SteamCdn.setOverride(SteamCdn.AUTO)
+            onDone?.invoke(SteamCdn.AUTO)
+            return
+        }
         steamLineTestBusy = true
         steamLineTestEdges = null
+        // Said before the first byte, because the session start waits for this: without it the
+        // press would look ignored for as long as the edges take to answer.
+        if (!showDialog) android.widget.Toast.makeText(
+            this, R.string.steam_line_test_running, android.widget.Toast.LENGTH_SHORT,
+        ).show()
         Thread({
-            val edges = SteamCdn.hosts(SteamCdn.AUTO).map { host -> SteamCdnProbe.measure(host) }
-            android.util.Log.i("SteamCdn", "line test: " + edges.joinToString { "${it.host} ok=${it.reachable} ${SteamCdnProbe.rateToString(it.bytesPerSecond)}" })
+            val edges = SteamCdnProbe.measureAll(SteamCdn.hosts(SteamCdn.AUTO), LINE_TEST_BUDGET_MS)
+            val winner = SteamCdnProbe.recommendation(edges) ?: SteamCdn.AUTO
+            android.util.Log.i("SteamCdn", "line test: " + edges.joinToString { "${it.host} ok=${it.reachable} ${SteamCdnProbe.rateToString(it.bytesPerSecond)}" } + " -> $winner")
             ui.post {
                 steamLineTestBusy = false
-                steamLineTestEdges = edges
+                if (showDialog) {
+                    steamLineTestEdges = edges
+                } else {
+                    if (!isFinishing && !isDestroyed) showReportToast(steamLineReport(edges, winner))
+                    // The numbers go to the run as well as to the screen: the Toast is gone in
+                    // three seconds and the download it was taken for takes minutes, and the
+                    // loading screen keeps saying what was measured for the whole of it.
+                    // The order as well as the pin: every edge the test timed, fastest first, so
+                    // a lead short of the pin's 2x still decides which edge is tried first while
+                    // the other stays as the fallback (see SessionService, BL_STEAM_CDN_ORDER).
+                    SteamCdn.setMeasured(
+                        winner, steamLineRanking(edges), SteamCdnProbe.ranked(edges).map { it.host },
+                    )
+                }
+                onDone?.invoke(winner)
             }
         }, "steam-line-test").start()
+    }
+
+    /**
+     * What the Toast carries: every edge that moved bytes, fastest first, then the pin the numbers
+     * bought - or, when they bought none, why the script's own order stands. An edge that timed out
+     * is left out rather than shown as unreachable: this test has a budget of seconds and a slow
+     * edge is a verdict about the budget, not about the network.
+     */
+    private fun steamLineReport(edges: List<SteamCdnProbe.Edge>, winner: String): String {
+        val rows = rankedRows(edges)
+        if (rows.isEmpty()) return getString(R.string.steam_line_test_none)
+        val order = SteamCdnProbe.ranked(edges).map { it.host }
+        val tail = when {
+            winner != SteamCdn.AUTO ->
+                getString(R.string.steam_line_test_pinned, SteamCdnProbe.label(SteamCdn.hosts(winner).first()))
+            SteamCdn.orderValue(order).isNotEmpty() ->
+                getString(R.string.steam_line_test_order, SteamCdnProbe.label(order.first()))
+            else -> getString(R.string.steam_line_test_auto)
+        }
+        return getString(R.string.steam_line_test_title) + "\n" + rows.joinToString("\n") + "\n" + tail
+    }
+
+    /**
+     * The same measurement as a single line, for the loading screen's own footer: "1. Fastly -
+     * 3.2 MB/s · 2. Akamai - 1.1 MB/s". Deliberately the rows and nothing else - it sits under the
+     * percentage of a running download - because which edge that download actually uses is a fact
+     * the install script reports for itself (see LoadingState.source).
+     */
+    private fun steamLineRanking(edges: List<SteamCdnProbe.Edge>): String = rankedRows(edges).joinToString(" · ")
+
+    /**
+     * The edges that moved bytes, fastest first, as the numbered rows both reports use. An edge
+     * whose measurement ran out of budget is left out rather than shown as unreachable: the test
+     * has seconds to spend and that is a verdict about the budget, not about the network.
+     */
+    private fun rankedRows(edges: List<SteamCdnProbe.Edge>): List<String> =
+        edges.filter { it.reachable && it.bytesPerSecond > 0 }.take(3).mapIndexed { index, edge ->
+            getString(
+                R.string.steam_line_test_line, index + 1,
+                SteamCdnProbe.label(edge.host), SteamCdnProbe.rateToString(edge.bytesPerSecond),
+            )
+        }
+
+    /**
+     * Times every mirror the app can fetch GitHub through and says which three came out fastest.
+     * Called from the two moments the choice matters: the user picking the mainland mirror, and a
+     * Steam session starting with no runtime installed. The numbers are the reason for the mirror
+     * the download then uses, because this measurement is what orders it - a user on a 5 MB/s
+     * GitHub line has watched a download slow to 1 MB/s through an accelerator that was the right
+     * answer on somebody else's connection, and this is what stops that being invisible.
+     */
+    private fun runMirrorTest() {
+        if (mirrorTestBusy) return
+        mirrorTestBusy = true
+        android.widget.Toast.makeText(this, R.string.mirror_test_running, android.widget.Toast.LENGTH_SHORT).show()
+        Thread({
+            // The runtime's own asset when the catalog can be read - the very file this test exists
+            // to protect - and a pinned release asset when it cannot, which is the network the test
+            // is for. Both are real GitHub URLs of the kind the accelerators carry.
+            val target = runCatching { LinuxRuntimeInstaller.fetchRelease()?.url }.getOrNull()
+            val lines = MirrorTest.measure(target ?: MirrorTest.FALLBACK_URL)
+            android.util.Log.i("MirrorTest", lines.joinToString { "${it.label}=${MirrorTest.rate(it.bytesPerSecond)}" })
+            ui.post {
+                mirrorTestBusy = false
+                // The same reason as the Steam line report: the platform's own layout would show
+                // the first mirror and ellipsise the other two away.
+                if (!isFinishing && !isDestroyed) showReportToast(mirrorReport(lines))
+            }
+        }, "mirror-test").start()
+    }
+
+    /** The report: the measured fastest mirrors, in the order the download is about to take them. */
+    private fun mirrorReport(lines: List<MirrorTest.Line>): String {
+        if (!MirrorTest.anyReachable(lines)) return getString(R.string.mirror_test_none)
+        val body = lines.filter { it.reachable }.take(3).mapIndexed { index, line ->
+            getString(R.string.mirror_test_line, index + 1, line.label, MirrorTest.rate(line.bytesPerSecond))
+        }.joinToString("\n")
+        return getString(R.string.mirror_test_title) + "\n" + body
     }
 
     /**
@@ -2170,9 +2450,10 @@ class MainActivity : ComponentActivity() {
         Thread({
             // Named, not positional: localOnly sits between the folder and the listener, and this
             // row is the general "from a folder" install - it still takes whatever Valve has that
-            // the folder does not. The CDN is the edge the user pinned in Setup, if any.
+            // the folder does not. The edge is this run's line measurement if one was made for it,
+            // and the user's Setup choice otherwise (see SteamCdn.forSession).
             val problem = SteamClient.installFromDir(this, dir,
-                cdn = SteamCdn.guestValue(steamCdn),
+                cdn = SteamCdn.guestValue(SteamCdn.forSession(this)),
                 onProgress = { s, p -> ui.post { steamClientStage = s; steamClientPercent = p } })
             ui.post {
                 steamClientStage = null
@@ -2282,10 +2563,14 @@ class MainActivity : ComponentActivity() {
                 busy = false
                 stage = ""
                 percent = -1
-                firstLocalNeeded = stillNeeded
                 when {
-                    held.isEmpty() -> android.widget.Toast.makeText(this, R.string.first_local_nothing_found, android.widget.Toast.LENGTH_LONG).show()
-                    missing.isEmpty() -> android.widget.Toast.makeText(this, R.string.first_local_all_installed, android.widget.Toast.LENGTH_LONG).show()
+                    // A mis-tap keeps the button: nothing went in, so the judgement that put it up
+                    // stands. Recomputing could take it away, and the dialog is the whole answer here.
+                    held.isEmpty() -> firstLocalHint = getString(R.string.first_local_nothing_found)
+                    missing.isEmpty() -> {
+                        firstLocalNeeded = stillNeeded
+                        android.widget.Toast.makeText(this, R.string.first_local_all_installed, android.widget.Toast.LENGTH_LONG).show()
+                    }
                     free < need -> android.widget.Toast.makeText(
                         this,
                         getString(
@@ -2327,6 +2612,17 @@ class MainActivity : ComponentActivity() {
                 }, { what, minutes ->
                     stall.compareAndSet(null, what to minutes)
                     ui.post { stage = getString(R.string.first_local_stalled, what, minutes) }
+                }, { number, total, label ->
+                    // The card goes up before the step does, and the step waits for it: what follows
+                    // is minutes of proot with the device busy, and a message posted into that is a
+                    // message that may never arrive. The wait is bounded, so the courtesy cannot
+                    // hold the install up.
+                    val up = java.util.concurrent.CountDownLatch(1)
+                    ui.post {
+                        showLongToast(getString(R.string.first_local_long_step, label), LONG_STEP_MS)
+                        up.countDown()
+                    }
+                    up.await(TOAST_UP_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
                 })
             } catch (t: Throwable) {
                 Log.e(TAG, "first-time local install", t)
@@ -2462,5 +2758,26 @@ class MainActivity : ComponentActivity() {
         private const val LANG_PERMISSION = 4
         /** And again for the one-click install's log copy. */
         private const val LOG_PERMISSION = 5
+        /**
+         * How long a session start waits for the Steam line test. Two edges on a working network
+         * answer in a second or two; an edge that is merely unreachable would take its own socket
+         * timeouts, and the user is waiting to play, so past this the run is reported as timed out
+         * and the session starts without a pin - the script's own order and its slow-edge switch
+         * are what the pin was going to improve on, not replace.
+         */
+        private const val LINE_TEST_BUDGET_MS = 8_000L
+        /**
+         * How long the card that warns about a long step stays up once it is there. A minute, which
+         * is long enough that a user who glances at the phone part-way through the wait sees it.
+         */
+        private const val LONG_STEP_MS = 60_000L
+        /**
+         * How long the install waits for that card to have reached the platform before it starts the
+         * step. Bounded, because the card is a courtesy and the install is the point: a wedged main
+         * thread must not be able to hold a run up with it.
+         */
+        private const val TOAST_UP_MS = 5_000L
+        /** How often that card is put up again on a ROM that will not hold one for [LONG_STEP_MS]. */
+        private const val TOAST_REPEAT_MS = 3_000L
     }
 }

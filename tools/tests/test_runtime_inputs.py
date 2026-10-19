@@ -55,6 +55,27 @@ class RuntimeInputsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'sources changed'):
             runtime.verify(self.root)
 
+    def test_bumping_the_version_string_is_not_a_runtime_change(self):
+        # The three version lines are the release button: the owner of this fork bumps them by hand
+        # before every build, and hashing them as they stand turned that into a build failure that
+        # named the runtime payload - which had not moved at all.
+        build = self.root / 'app/build.gradle'
+        build.parent.mkdir(parents=True, exist_ok=True)
+        build.write_text('versionCode 13\nversionName "4.0"\n'
+                         'buildConfigField "String", "FORK_VERSION", "\\"0.4.0.4\\""\n'
+                         'dependencies { }\n', encoding='utf-8')
+        runtime.record(self.root)
+        build.write_text('versionCode 14\nversionName "4.1"\n'
+                         'buildConfigField "String", "FORK_VERSION", "\\"0.4.0.5\\""\n'
+                         'dependencies { }\n', encoding='utf-8')
+        runtime.verify(self.root)
+        # Anything else in that file is still an input, so a real edit still stops the build.
+        build.write_text('versionCode 14\nversionName "4.1"\n'
+                         'buildConfigField "String", "FORK_VERSION", "\\"0.4.0.5\\""\n'
+                         'dependencies { implementation "x" }\n', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'sources changed'):
+            runtime.verify(self.root)
+
     def test_modified_prebuilt_binary_is_rejected(self):
         runtime.record(self.root)
         (self.root / 'app/src/main/jniLibs/arm64-v8a/libproot.so').write_bytes(b'old APK binary')

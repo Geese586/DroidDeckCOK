@@ -462,7 +462,7 @@ fun ModeSheetRows(s: ModeSettings, a: ModeSettingsActions, tab: String, extras: 
                 SecondaryButton(stringResource(R.string.mode_steam_repair_button), enabled = !s.steamRepairQueued, onClick = a.onSteamRepair)
             }
             // Which copy this is: the version, when the running APK was written, and this fork's
-            // own build number under it ("COK(0.4.0.1)"). The version is the upstream release this
+            // own build number under it ("COK(0.4.0.2)"). The version is the upstream release this
             // copy carries, so every build of that release reports the same one - the two lines
             // below it are what name a build, and the only way to tell, without opening the file,
             // that a device is on the build that was just handed over.

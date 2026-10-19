@@ -129,8 +129,9 @@ object DesktopCatalog {
         try {
             val downloading = context.getString(R.string.user_apps_downloading, entry.name)
             listener?.onProgress(LinuxRuntimeInstaller.Step.DOWNLOADING, downloading, 0)
-            val ok = Downloader.downloadFile(entry.url, download, true) { f ->
-                listener?.onProgress(LinuxRuntimeInstaller.Step.DOWNLOADING, downloading, if (f < 0) -1 else Math.round(f * 100f))
+            val ok = Downloader.downloadFile(entry.url, download, true) { source, f ->
+                val stage = if (source == null) downloading else downloading + " · " + source
+                listener?.onProgress(LinuxRuntimeInstaller.Step.DOWNLOADING, stage, if (f < 0) -1 else Math.round(f * 100f))
             }
             if (!ok) return context.getString(R.string.user_apps_download_failed)
             listener?.onProgress(LinuxRuntimeInstaller.Step.VERIFYING, context.getString(R.string.rtinst_verifying), -1)
@@ -203,7 +204,9 @@ object DesktopCatalog {
             val digest = Hashes.sha256(archive)
             if (entry != null) {
                 if (entry.sha256.isEmpty()) return "The catalog has no checksum for ${entry.name}"
-                listener?.onProgress("Verifying", -1)
+                // Localized like the extract stage below, which this now runs into: a Chinese
+                // screen was showing "Verifying" and "Installing ..." in English on this path only.
+                listener?.onProgress(context.getString(R.string.rtinst_verifying), -1)
                 if (!entry.sha256.equals(digest, ignoreCase = true)) return "Checksum mismatch - nothing was changed"
             }
             listener?.onProgress("Installing ${entry?.name ?: archive.name}", -1)

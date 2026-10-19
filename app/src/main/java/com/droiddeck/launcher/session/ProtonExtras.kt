@@ -224,8 +224,9 @@ object ProtonExtras {
         onProgress(downloading, 0)
         var downloaded = false
         for (attempt in 0 until 5) {
-            downloaded = Downloader.downloadFile(asset.url, archive, true) { fraction ->
-                onProgress(downloading, if (fraction < 0) -1 else (fraction * 100f).toInt().coerceIn(0, 100))
+            downloaded = Downloader.downloadFile(asset.url, archive, true) { source, fraction ->
+                val stage = if (source == null) downloading else downloading + " · " + source
+                onProgress(stage, if (fraction < 0) -1 else (fraction * 100f).toInt().coerceIn(0, 100))
             }
             if (downloaded) break
             if (attempt < 4) {
