@@ -2861,7 +2861,7 @@
     <string name="spatial_print_job">DroidDeck ChArUco 30 mm</string>
 
 <string name="games_play_steam_advanced">回線を選んで起動</string>
-<string name="play_power_mode">省電力モード（テスト）</string>
+<string name="play_power_mode">省電力（60fps上限）</string>
 <string name="gpu_display_hint">画面への出力を担当します。DroidDeckの再起動後に有効になります。</string>
 <string name="selfinst_http">ダウンロード先がHTTP %1$dを返しました</string>
 <string name="turnip_download_http">ダウンロード先がHTTP %1$dを返しました</string>

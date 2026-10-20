@@ -2861,7 +2861,7 @@
     <string name="spatial_saved_views_hint">저장된 뷰는 다시 계산될 수 있습니다. 현재 추적 좌표계에서 캡처하려면 새 보정을 시작하세요.</string>
 
 <string name="games_play_steam_advanced">회선 선택 후 실행</string>
-<string name="play_power_mode">절전 모드 (테스트)</string>
+<string name="play_power_mode">절전 (60fps 제한)</string>
 <string name="gpu_display_hint">화면 출력을 담당합니다. DroidDeck을 다시 시작한 후 적용됩니다.</string>
 <string name="selfinst_http">다운로드 응답: HTTP %1$d</string>
 <string name="turnip_download_http">다운로드 응답: HTTP %1$d</string>

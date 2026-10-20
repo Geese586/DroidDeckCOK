@@ -426,8 +426,11 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         com.droiddeck.launcher.gpu.SteamVrHealth.begin(this, SessionState.sessionId)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (!SessionState.running) {
-            SessionState.fpsLimit = SessionPrefs.fpsLimit(
-                this, SessionPrefs.prefMode(intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM),
+            SessionState.fpsLimit = PowerMode.fpsLimit(
+                this,
+                SessionPrefs.fpsLimit(
+                    this, SessionPrefs.prefMode(intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM),
+                ),
             )
         }
         applyOutputPacing()
@@ -541,12 +544,9 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         } }
         glassesScope.launch { com.droiddeck.launcher.handtracking.HandTracking.settings.collect { updateHandCamera() } }
         glassesScope.launch {
-            // Once, outside the loop: the power switch can only change between sessions, and
-            // reading it per tick would add a SharedPreferences read to a 100 ms poll.
-            val pollMs = PowerMode.glassesPollMs(this@SessionActivity)
             while (true) {
                 updateTrackingRecovery()
-                kotlinx.coroutines.delay(pollMs)
+                kotlinx.coroutines.delay(100)
             }
         }
         glassesScope.launch {

@@ -2911,7 +2911,7 @@
     <string name="spatial_opencv_load_error">OpenCV no se pudo cargar</string>
 
 <string name="games_play_steam_advanced">Elegir línea y jugar</string>
-<string name="play_power_mode">Ahorro de energía (prueba)</string>
+<string name="play_power_mode">Ahorro (60 fps)</string>
 <string name="gpu_display_hint">Dibuja los fotogramas en pantalla. Se aplica al reiniciar DroidDeck.</string>
 <string name="selfinst_http">La descarga respondió HTTP %1$d</string>
 <string name="turnip_download_http">la descarga respondió HTTP %1$d</string>
