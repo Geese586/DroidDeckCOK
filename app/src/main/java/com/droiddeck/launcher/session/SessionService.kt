@@ -340,8 +340,6 @@ class SessionService : Service() {
 
         Log.i(TAG, GpuClockPin.start(this))
         Log.i(TAG, GameThreadHints.start(this))
-        // Which of the two the session ran as, so a power test is reproducible from app.log alone.
-        Log.i(TAG, PowerMode.describe(this))
 
         val size = SessionState.outputSize
         val guest = ArrayList<String>()

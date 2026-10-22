@@ -2861,7 +2861,6 @@
     <string name="spatial_print_job">DroidDeck ChArUco 30 mm</string>
 
 <string name="games_play_steam_advanced">进阶游玩</string>
-<string name="play_power_mode">省电（限 60 帧）</string>
 <string name="gpu_display_hint">把帧绘制到屏幕。重启 DroidDeck 后生效。</string>
 <string name="selfinst_http">下载服务器返回 HTTP %1$d</string>
 <string name="turnip_download_http">下载返回 HTTP %1$d</string>

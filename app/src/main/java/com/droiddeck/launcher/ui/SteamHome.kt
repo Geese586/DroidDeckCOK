@@ -91,9 +91,6 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
     val games = remember(s.steamGames) { s.steamGames.sortedWith(compareByDescending<Library.SteamGame> { it.lastPlayed }.thenBy { it.gameId }) }
     val narrow = LocalNarrowPane.current
     var words by remember { mutableStateOf<Rect?>(null) }
-    // The sheet's scrim covers the whole page, so the top-left overlay below has to step out of
-    // the way while it is open - otherwise a tap on the switch would leave the sheet up.
-    var sheetOpen by remember { mutableStateOf(false) }
     val mode = com.droiddeck.launcher.session.SessionService.MODE_STEAM
     val tabs = modeSheetTabs(steam = true).map { it to sheetTabLabel(it) }
     val back = stringResource(R.string.hop_from_play)
@@ -136,7 +133,6 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
                 }
             },
             onOpen = a.onSteamSettings, onPrimary = a.onPlay,
-            onOpenChange = { sheetOpen = it },
             modifier = Modifier.matchParentSize(),
             start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
             background = {
@@ -190,36 +186,13 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
             rows = { tab -> a.modeSheet(mode, tab, extras) },
         )
         // The fork's own version, top left where nothing else claims space: with builds passed
-        // around by hand the screen itself should say which one it is (e.g. "COK0.4.0.2").
-        // Under it sits the power switch (DroidDeckCOK): off = upstream 0.5.0 logic exactly, on =
-        // the four invisible per-session costs dropped. Both states are logged at session start,
-        // so a user can run the same game twice and compare.
-        Column(
+        // around by hand the screen itself should say which one it is (e.g. "COK0.5.0").
+        Text(
+            "COK" + BuildConfig.FORK_VERSION,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
             modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                "COK" + BuildConfig.FORK_VERSION,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-            )
-            if (!sheetOpen) Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    stringResource(R.string.play_power_mode),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                )
-                ToggleSwitch(
-                    checked = s.powerMode,
-                    enabled = !s.sessionRunning,
-                    label = stringResource(R.string.play_power_mode),
-                    modifier = Modifier.testTag("power-mode"),
-                ) { a.onPowerMode(it) }
-            }
-        }
+        )
     }
 }
 
