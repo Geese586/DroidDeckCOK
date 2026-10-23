@@ -82,6 +82,8 @@ desktop.ini
 app/src/main/assets/directaudio/
 /tools/vr/out/
 
-# DroidDeckCOK: the five add-on packs are staged into the APK assets by tools/packs/build.sh.
-# 30 MB of generated archives, never source - same policy as assets/linuxfs/ above.
-/app/src/main/assets/packs/
+# DroidDeckCOK: only the two packs the one-click local install needs travel in the APK
+# (proot 96 KB + directaudio 22 KB, see tools/packs/packs.lock), so they are source now and are
+# tracked. The big ones (tracking/xbox/comet) are fetched on demand from DroidDeck-Components and
+# never land here; a local copy for the release gates lives in build-logs/packs-mirror/, which is
+# already ignored above.

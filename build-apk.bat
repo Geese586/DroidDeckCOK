@@ -310,11 +310,12 @@ if not exist "%ROOT%\app\src\main\jniLibs\arm64-v8a\libdirectaudiorelay.so" set 
 if not exist "%ROOT%\app\src\main\assets\linuxfs\libfakeinput.so" set "PAYLOAD_MISSING=1"
 if not exist "%ROOT%\app\src\main\assets\linuxfs\libssbs.so" set "PAYLOAD_MISSING=1"
 if not exist "%ROOT%\app\src\main\assets\linuxfs\usr\local\bin\gamescope" set "PAYLOAD_MISSING=1"
-rem  DroidDeckCOK: the five add-on packs (0.6.0's replacement for the payload that used to sit
-rem  inside assets/linuxfs) travel in the APK's own assets so the one-click local install needs no
-rem  network. A missing one does not fail the build - it silently turns into an empty
-rem  PACK_*_SHA256, and the device then cannot install the runtime at all - so it is checked here.
-for %%P in (proot directaudio tracking xbox comet) do (
+rem  DroidDeckCOK: the add-on packs 0.6.0 replaced the old assets/linuxfs payload with. Only the two
+rem  the one-click local install cannot start without travel in the APK's own assets (proot 96 KB +
+rem  directaudio 22 KB); tools/packs/packs.lock pins the other three by digest and they are fetched
+rem  when the matching feature is switched on. A missing bundled pack does not fail the build - it
+rem  turns into a stale SHA-256 and the device cannot install the runtime at all - so it is checked here.
+for %%P in (proot directaudio) do (
     if not exist "%ROOT%\app\src\main\assets\packs\%%P.tar.zst" set "PAYLOAD_MISSING=1"
 )
 if defined PAYLOAD_MISSING (
@@ -322,7 +323,8 @@ if defined PAYLOAD_MISSING (
     echo [WARN] This checkout is missing the session's native payload: either
     echo        app\src\main\jniLibs\arm64-v8a has no libproot.so or
     echo        libdirectaudiorelay.so, or app\src\main\assets\linuxfs has no
-    echo        libfakeinput.so / libssbs.so / gamescope.
+    echo        libfakeinput.so / libssbs.so / gamescope, or
+    echo        app\src\main\assets\packs has no proot / directaudio pack.
     echo        Those are built by tools\build_local.sh, which needs Docker; no
     echo        other step produces them. Without them the APK installs and its UI
     echo        runs, but no Linux session can ever start.

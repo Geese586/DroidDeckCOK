@@ -12,11 +12,15 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path('app/build/runtime-inputs.json')
-# DroidDeckCOK: this fork ships the five packs inside the APK's own assets, so they are built
-# straight into app/src/main/assets/packs (app/build.gradle hashes them from there and
-# AddonPack.install unpacks them from there). Upstream keeps them in build/packs and only downloads
-# them from GitHub Releases.
+# DroidDeckCOK: tools/packs/packs.lock decides which add-on packs travel inside the APK (bundled)
+# and which are only pinned by digest and fetched on demand. The bundled ones are hashed straight
+# out of app/src/main/assets/packs by app/build.gradle and unpacked from there by AddonPack.install;
+# the unbundled ones (tracking/xbox/comet, 42 MB together) never enter the APK.
 PACKS = Path('app/src/main/assets/packs')
+# A local copy of the unbundled archives, kept so this script can still compare their contents with
+# the runtime inputs. Ignored by git and optional: without it those comparisons are simply skipped.
+PACK_MIRROR = Path('build-logs/packs-mirror')
+PACK_LOCK = Path('tools/packs/packs.lock')
 
 # Runtime trees shipped as add-on packs (tools/packs/build.sh) rather than inside the APK.
 PACKED = {'assets/linuxfs/usr/local/lib/droiddeck-xbox/': 'xbox', 'assets/linuxfs/usr/local/lib/droiddeck-comet/': 'comet',
@@ -30,6 +34,7 @@ SOURCE_PATHS = ['app/build.gradle', 'app/src/main/cpp/fakeinput_steam.cpp', 'app
                 'tools/gamescope/release.env', 'tools/droiddeck-esync/release.env',
                 'tools/mangoapp', 'tools/msitools', 'tools/pipewire', 'tools/comet', 'tools/xbox', 'tools/build_local.sh',
                 'tools/release/runtime_inputs.py', 'app/src/main/assets/desktop-removal',
+                'tools/packs/packs.lock',
                 'tools/quest', 'tools/vr/src', 'tools/vr/driver_droiddeck', 'tools/vr/layer', 'tools/vr/build.sh',
                 'app/src/main/cpp/waylandcomp/src/headpose_shm.h',
                 'app/src/main/cpp/venc/venc_proto.h',
@@ -172,10 +177,25 @@ def verify(root=ROOT):
     return data
 
 
+def pack_lock(root=ROOT):
+    return {name: spec for name, spec in json.loads((root / PACK_LOCK).read_text(encoding='utf-8')).items()
+            if not name.startswith('_')}
+
+
 def pack_digests(root, name):
+    """Contents of one add-on pack, or None when no local copy exists to read.
+
+    Only the bundled two are required to be in the tree. The rest are downloaded on demand and
+    pinned by digest alone, so a checkout without them is normal rather than broken - the caller
+    then checks what it can (that the APK does not carry them) and skips the content comparison.
+    """
     path = root / PACKS / (name + '.tar.zst')
     if not path.is_file():
-        raise ValueError('Missing add-on pack ' + name + '. Run tools/packs/build.sh app/src/main/assets/packs.')
+        if pack_lock(root)[name]['bundled']:
+            raise ValueError('Missing bundled add-on pack ' + str(path) + '.')
+        path = root / PACK_MIRROR / (name + '.tar.zst')
+        if not path.is_file():
+            return None
     process = subprocess.Popen(['zstd', '-dc', str(path)], stdout=subprocess.PIPE)
     digests = {}
     try:
@@ -192,27 +212,42 @@ def pack_digests(root, name):
 
 def check_apk(apk, root=ROOT):
     data = verify(root)
+    lock = pack_lock(root)
     packs = {name: pack_digests(root, name) for name in PACK_NAMES}
     with ZipFile(apk) as package:
         names = set(package.namelist())
+        # What the lock declares is what has to be in the package, byte for byte: the bundled two are
+        # the whole reason a device with no network can still run the one-click install, and an
+        # unbundled one showing up means 25 MB quietly came back.
+        for name, spec in lock.items():
+            asset = 'assets/packs/' + name + '.tar.zst'
+            if not spec['bundled']:
+                if asset in names:
+                    raise ValueError('APK carries ' + asset + ', which packs.lock leaves to the download')
+                continue
+            if asset not in names:
+                raise ValueError('APK is missing ' + asset + ', so the local install would need a network')
+            content = package.read(asset)
+            if hashlib.sha256(content).hexdigest() != spec['sha256']:
+                raise ValueError('APK carries a ' + asset + ' that is not the one packs.lock pins')
         for library in PACKED_LIBRARIES:
             if library in names:
                 raise ValueError('APK still carries ' + library + ', which the tracking pack provides')
-            if library.rsplit('/', 1)[1] not in packs['tracking']:
+            if packs['tracking'] is not None and library.rsplit('/', 1)[1] not in packs['tracking']:
                 raise ValueError('Tracking pack missing ' + library)
         for name, output in data['outputs'].items():
             if name in PACKED_FILES:
                 pack, rel = PACKED_FILES[name]
                 if name in names:
                     raise ValueError('APK still carries ' + name + ', which the ' + pack + ' pack provides')
-                if packs[pack].get(rel) != output['sha256']:
+                if packs[pack] is not None and packs[pack].get(rel) != output['sha256']:
                     raise ValueError('Add-on pack ' + pack + ' is missing or has a stale ' + name)
                 continue
             prefix = next((p for p in PACKED if name.startswith(p)), None)
             if prefix:
                 if name in names:
                     raise ValueError('APK still carries ' + name + ', which the ' + PACKED[prefix] + ' pack provides')
-                if packs[PACKED[prefix]].get(name[len(prefix):]) != output['sha256']:
+                if packs[PACKED[prefix]] is not None and packs[PACKED[prefix]].get(name[len(prefix):]) != output['sha256']:
                     raise ValueError('Add-on pack ' + PACKED[prefix] + ' is missing or has a stale ' + name)
                 continue
             try:

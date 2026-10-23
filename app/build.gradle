@@ -104,22 +104,42 @@ def desktopKde = rootProject.file('tools/desktop-kde/release.env').readLines()
 def trackingPack = rootProject.file('tools/packs/tracking/release.env').readLines()
     .findAll { it.contains('=') && !it.startsWith('#') }
     .collectEntries { def kv = it.split('=', 2); [(kv[0].trim()): kv[1].trim()] }
-def addonPacks = ['proot', 'directaudio', 'tracking', 'xbox', 'comet'].collectEntries { name ->
-    // DroidDeckCOK: the packs this fork ships travel inside the APK's own assets, so a device that
-    // cannot reach GitHub installs them from the package it already has (AddonPack.install reads
-    // them back out). The digest below is then computed from exactly the bytes that ship.
+// DroidDeckCOK: every pack is pinned by content in tools/packs/packs.lock, and the lock decides
+// which of them travel inside the APK. The two the one-click local install cannot start without
+// (proot, directaudio, 119 KB together) are bundled, so the first install needs no network at all;
+// the rest (tracking 25 MB, xbox 13 MB, comet 4 MB) are large and only fetched when somebody turns
+// that feature on, so bundling them would add 42 MB to every download for nothing.
+//
+// The lock is the only source of truth for the unbundled ones: a missing archive used to mean an
+// empty PACK_*_SHA256, which makes AddonPack.available false and leaves that feature unable to
+// install for the life of the build - with no error anywhere. So both directions are asserted here
+// rather than trusted: declared bundled but absent fails the build, and declared unbundled but
+// present fails it too (that silently reintroduces the megabytes).
+def packLock = new groovy.json.JsonSlurper().parse(rootProject.file('tools/packs/packs.lock'))
+    .findAll { !it.key.toString().startsWith('_') }
+def addonPacks = packLock.collectEntries { name, spec ->
     def pack = file("src/main/assets/packs/${name}.tar.zst")
-    if (!pack.isFile()) {
-        if (ciBuild) throw new GradleException("Add-on pack ${pack} is missing: run tools/packs/build.sh app/src/main/assets/packs")
-        return [(name): [sha256: '', size: 0L]]
+    if (spec.bundled != pack.isFile()) {
+        throw new GradleException("tools/packs/packs.lock declares ${name} bundled=${spec.bundled} but " +
+            "${pack} ${pack.isFile() ? 'exists' : 'is missing'}")
     }
+    if (!spec.bundled) {
+        return [(name): [sha256: spec.sha256 as String, size: (spec.size as Number).longValue()]]
+    }
+    // Bundled: hash the bytes that actually ship, and refuse to build if they are not the ones the
+    // lock describes - a swapped archive would otherwise install under the wrong pinned digest.
     def digest = java.security.MessageDigest.getInstance('SHA-256')
     pack.withInputStream { input ->
         byte[] buffer = new byte[1 << 20]
         int n
         while ((n = input.read(buffer)) > 0) digest.update(buffer, 0, n)
     }
-    [(name): [sha256: digest.digest().encodeHex().toString(), size: pack.length()]]
+    def actual = digest.digest().encodeHex().toString()
+    if (actual != spec.sha256) {
+        throw new GradleException("${pack} does not match tools/packs/packs.lock (${actual}); " +
+            'refresh the lock from the release it came from')
+    }
+    [(name): [sha256: actual, size: pack.length()]]
 }
 def desktopRemovalSources = new groovy.json.JsonSlurper().parse(file('src/main/assets/desktop-removal/sources.json'))
 if (desktopRemovalSources.archives[desktopKde.DESKTOP_KDE_TAG] != desktopKde.DESKTOP_KDE_SHA256) {
@@ -149,7 +169,7 @@ android {
         versionName "6.0"
         // The fork's own build number, shown as "COK<value>" on the Steam page and the update page.
         // Publishing number: the release owner decides it, never the build. (DroidDeckCOK)
-        buildConfigField "String", "FORK_VERSION", "\"0.4.0.6\""
+        buildConfigField "String", "FORK_VERSION", "\"0.6.0\""
         buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
         buildConfigField "String", "SOURCE_COMMIT", "\"${sourceCommit}\""
         buildConfigField "int", "PR_NUMBER", "${prNumber}"
