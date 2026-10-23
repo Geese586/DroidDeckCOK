@@ -5,168 +5,54 @@
   </picture>
 </p>
 
-# DroidDeckCOK · 中文本地一键安装版
+DroidDeck brings the SteamOS experience to Android: Valve's Steam client in Big Picture on your Adreno handheld, with Windows games through Valve's ARM64 Proton.
 
-**DroidDeckCOK**（COK = **C**hinese **O**ne **K**ey）是本仓库的名字，指这份**在官方 DroidDeck 上加了「首次本地一键安装」**的中文本地化改造版。**改名只落在构建产物的文件名上**：包名与应用名与上游完全相同，**版本号跟上游那一版走、只去掉开头的 `0.`**，本仓库自己的构建号另显示一行 `COK(...)`（见「[二、安装 APK](#二安装-apk)」）。
+<p align="center"><a href="https://discord.gg/JRGAvawjsm"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" alt="Join the DroidDeck Discord"></a></p>
 
-离线一键安装包文件，百度网盘，永久分享：
-链接: https://pan.baidu.com/s/1PY7ow7K81tvcqq0AAj8uNQ 提取码: 9527 
+<p align="center"><img src="docs/releases/media/0.2.0/launch-into-steam.gif" width="80%" alt="Tapping DroidDeck on the Android home screen and landing in Steam Big Picture"></p>
 
-离线一键安装包文件，夸克网盘，永久分享：
-链接：https://pan.quark.cn/s/3962c8e97fde
-提取码：DRMQ
+> Note: DroidDeck does not have a stand-alone website. Do not click on any download links from websites claiming to be the DroidDeck team. 
 
-中文说明安装教学视频地址B站：
-https://www.bilibili.com/video/BV1XAHd6PEKT/?vd_source=55a7f582a98d214a03f037a275fc90b3#reply320122768208
+## Requirements and install
 
-中文说明安装教学视频地址Youtube：
-https://www.youtube.com/watch?v=ND505ZGazeA
+Use Android 9 or newer on a supported Adreno device (730 or newer, or 8xx). Adreno 6xx is experimental: DirectX 11 uses DXVK 2 and may run, and DirectX 12 games can still crash. Mali, Xclipse, PowerVR, and Adreno 710 are unsupported. No root is required. Allow about 3 GB for the runtime and 1.1 GB more for the desktop and emulators. Install the APK from [Releases](https://github.com/Droid-Deck/DroidDeck/releases), install the Linux runtime, then press **Play** and sign in. Steam downloads on first launch. Install **Desktop & apps** to use the desktop and emulators. The **Store** installs Linux apps and games from Flathub (ARM64 builds) with Flatpak; with additional options to install Appimages and set up scripts. **Stores** (Setup › Stores › "Show Stores in the rail") signs in to GOG, Epic Games and Amazon Games and downloads games into the Games storage. Epic keeps its direct API install path. Opening Epic Stores prepares Epic’s official Linux launcher preview. When installed, Epic games launched from DroidDeck use that client, and games installed in the client are imported into DroidDeck’s library and shortcuts. The x86-64 client runs through FEX on ARM and DroidDeck retains its Proton hooks; this preview and ARM setup are outside Epic’s listed Linux support. The cog on a store’s chip row sets its opening tab and download speed tier.
 
-DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve 的 Steam 客户端（Big Picture 大屏界面），Windows 游戏走 Valve 的 ARM64 Proton。
+On Android 14 and newer, before Steam launches, you must turn on **Disable child process restrictions** in Developer options. If this option is not available in developer settings (Android 12 and 13 devices), first launch of Steam will present a "Fix it for me" button, which will help automate the setup process.
 
-本仓库是 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck) 的改造版，**跟随上游滚动更新，本文不绑定任何具体版本号**。功能与上游一致，只做了下面四件事，并因为密钥的原因**重新签了名**（见「[五、签名说明](#五签名说明为什么本仓库是自己签的)」）：
+## Smart glasses
 
-| # | 改动 | 说明 |
-|---|---|---|
-| 1 | **补齐必要文件** | 上游交给 CI 现场生成、仓库里从不提交的原生载荷（37 个文件，含 guest 的执行入口 `libproot.so`）被提取回源码树，并给构建加了一道硬关卡 |
-| 2 | **中文字体支持** | 新增一步把 `fonts\` 里的中文字体装进 Linux 运行环境，让 Steam 大屏与桌面能正确显示中文 |
-| 3 | **首次本地一键安装** | Steam 游玩页新增一个按钮，从手机上的一个文件夹把运行环境、Proton、Steam 客户端、桌面、字体一次装完，全程不依赖手机联网 |
-| 4 | **更新页改为手动** | 本仓库的包是自有密钥签名的，官方的应用内更新装不到它上面，所以左侧「更新」页换成了说明原因、并给出去官方的 GitHub 发布页查看新版 |
+Use **Setup → Smart glasses** for app-wide virtual-screen settings across DroidDeck menus, launchers, desktop sessions, and games. Supported VITURE, RayNeo, XREAL, and Rokid connections provide 3DoF; Luma Ultra adds optional experimental 6DoF and stereo-assisted hand/Joy-Con tracking. Model support and SDK requirements differ: see the [smart-glasses support matrix](docs/smart-glasses-support.md) for supported devices, controls, setup, and limitations.
 
-> 上游项目没有独立官网。任何自称 DroidDeck 团队、提供下载链接的网站都不可信。
+## Community
 
----
+Join the [DroidDeck Discord](https://discord.gg/JRGAvawjsm) for help, Preview builds, and device reports. Bug reports go in its **#bug-reports** forum; attach the zip from **Share logs** (Setup, or the session drawer) so the logs come with it.
 
-## 一、系统要求
+## Build
 
-- **Android 14（API 34）及以上**
-- **Adreno 730 或更高**（Adreno 8xx 也可以）。**Adreno 6xx 为实验性支持**：DirectX 11 走 DXVK 2，可能可以运行；DirectX 12 游戏仍可能崩溃。Mali、Xclipse、PowerVR、Adreno 710 不支持
-- arm64 设备，**不需要 root**
-- 存储空间：Linux 运行环境约 3 GB；桌面与模拟器再约 1.1 GB
-- 首次启动 Steam **之前**，必须在系统「开发者选项」里关掉 **「限制子进程」**（Restrict child processes）。Android 12 / 13 若没有这个开关，首次启动 Steam 时会出现一个「帮我修好」按钮自动完成设置
+Run `tools/build_local.sh` with Docker, Java 17, the Android SDK/NDK, Rust through rustup, GitHub CLI, Python 3, and `zstd` installed. It prepares the same native libraries, pinned components and audio sinks as CI, then checks the APK's assets, JNI exports and dependencies. The APK is at `app/build/outputs/apk/release/app-release.apk`. Set `DROIDDECK_PA13_SOURCE_DIR` to an existing PulseAudio 13.0 source directory to skip downloading it. Set `DROIDDECK_SIGNING_ENV` to a signing environment file to install over a release build; relative keystore paths resolve beside that file. To install on an attached device, run `tools/deploy_local.sh`.
 
-## 二、安装 APK
+After preparation, ordinary `./gradlew :app:assembleRelease` builds can reuse the verified inputs. If native sources, component pins or staged files change, packaging stops with instructions to rerun the helper. Generated audio stays under `app/build/`; the tracked base bundle is never modified. `./gradlew -PskipRust=true :app:testDebugUnitTest` needs no native preparation. For an APK without store engines, use `DROIDDECK_SKIP_RUST=1 tools/build_local.sh`; it omits cached engine libraries too.
 
-用本仓库构建出来的包是 `DroidDeckCOK-<版本>-release.apk`（`<版本>` 取自构建时的 `versionName`；包名 `com.droiddeck.launcher`）。
+For the prepared Windows checkout, run `./tools/run_windows.ps1` (optionally with `-Serial <adb-serial>`), or select **DroidDeck XR** in Android Studio and run the **app** module on the connected phone. Machine-specific options live in the ignored `local.properties`: `droiddeck.python` selects a Python executable, `droiddeck.skipRust=true` omits the optional store download engines, and `droiddeck.debugApplicationIdSuffix=.xr` installs **DroidDeck XR Dev** alongside the signed release. The development app has its own runtime and Steam login. The local Java selection is in `.gradle/config.properties`.
 
-文件名里的 `DroidDeckCOK` 只是本仓库给构建产物起的名字（COK 即 Chinese One Key）。**包名与应用名全部沿用上游，一个都没改**；**版本号跟着上游那一版走、只去掉开头的 `0.`**（上游 `0.3.2` → 这里 `3.2`），所以官方一发 `0.3.3` 更新页就能判出更新，Android「应用信息」里显示的也是这个号；**本仓库自己的构建号不占版本号**，在它下面单独一行显示为 `COK(0.3.2.3)`（应用内设置 → 模式设置里 `DroidDeck` 那一行），更新页那行官方版本也带着它 —— 显示成 `官方 0.3.2(COK0.3.2.3)`。装到设备上桌面图标仍然显示 `DroidDeck`，覆盖升级的行为也和以前一样。
+`python tools/prepare_windows_runtime.py` restores this checkout's audited runtime inputs from the pinned CI APK, three locally rebuilt preload libraries, and the checksum-pinned Gamescope archive in `build/windows-setup/`. Start Docker Desktop's Linux engine first: preparation now rebuilds DroidDeck's ARM64 VR driver and Vulkan layer from current source and runs their native regression tests. The compiler image is built automatically on first use. Vulkan headers come from the NDK beside `--llvm-strip`, or from an explicit `--vk-include <NDK-sysroot-include>` directory.
 
-装上、打开之后，先装好 Linux 运行环境（或直接用下节的本地一键安装），再按 **Play** 登录 Steam —— Steam 客户端会在首次启动时自行下载。
+To reuse that build, pass `--rebuilt-vr build/windows-setup/vr`. Preparation verifies its `vr-build.json` against the current Git revision, source files, Vulkan headers, output checksums, and ARM64 architecture; missing or stale builds fail instead of falling back to the donor's VR libraries. The script checks the actual donor CI merge tree, still rejects unrelated unaudited runtime changes, and records component provenance in `app/build/windows-runtime-provenance.json`. Preserve these ignored preparation files when rebuilding locally; `clean` removes the prepared assets and their verification manifest.
 
-> ⚠️ 本包是**自有密钥签名**的，和 GitHub 上官方发布的 DroidDeck **不能互相覆盖安装**：装过官方版要先**卸载**，反之亦然。详见第五节。
+Run the helper and preload regression suite with `bash tools/test_local.sh`. On macOS it runs in Linux through Docker, matching the helpers' runtime and CI instead of compiling Linux preloads against macOS headers.
 
-## 三、首次本地一键安装（核心功能）
+## Limits
 
-### 3.1 它是用来做什么的
+Compatibility and performance vary by device; hardware validation is limited. Desktop compositing uses software rendering. Firefox sandboxing is reduced under proot. Logs are kept app-private (`files/logs/`, the last 30 sessions); **Share logs** packs the newest session, with the stores and tool logs, into one scrubbed zip.
 
-官方版第一次跑 Steam 时，Steam 客户端要从 Valve 的 CDN 下载（约 344 MB），运行环境、桌面等则从 GitHub 拉。中国大陆地区网络下这些源常常很慢甚至完全连不上，而首次安装又是绕不开的。
+## Credits and licence
 
-这个功能让你**先在电脑上把文件下好，拷进手机，再由 App 按顺序一次装完**，装的过程中手机完全可以不联网。
+GPL-3.0. Runtime, shim, input, and controller work build on WinNative and Bannerlator (maxjivi05). Epic Games and GOG support build on [Phobos’s](https://github.com/phobos665) adaptation of [Legendary](https://github.com/legendary-gl/legendary) and [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl), respectively. The registry entries a GOG game's install script (`goggame-<id>.script`) sets are read the way [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher)'s GOG setup (GPL-3.0) reads them. LSFG frame generation is from the work of Camille LaVey and the [Eden](https://eden-emu.dev) emulator project, following [lsfg-vk](https://github.com/PancakeTAS/lsfg-vk), ported to WinNative and DroidDeck by [@maxjivi05](https://github.com/maxjivi05); it needs your own copy of [Lossless Scaling](https://store.steampowered.com/app/993090/) and ships none of its shaders. x86 AppImages, and any whose own runtime cannot unpack them, are unpacked with [uruntime](https://github.com/VHSgunzo/uruntime) by VHSgunzo (MIT), shipped unmodified with its licence, which also starts the arm64 emulator AppImages whose own runtime cannot run its extractor on Android. The Steam client's audio goes through [@The412Banner](https://github.com/The412Banner)'s [DirectAudio](https://github.com/The412Banner/directaudio) PulseAudio sink (LGPL-2.1-or-later), built from `tools/directaudio/sink` with its request size kept to its ring so clients are not asked to queue 100 ms ahead. mmap ring-buffer controller input was developed by ribbit384 ([WinNative #345](https://github.com/WinNative-Emu/WinNative/pull/345)). Why the x86-64 Steam client refused the arm64 client's sign-in was checked by reading Steam's saved token with the `ConnectCache` format from [deadlock-api-ingest](https://github.com/deadlock-api/deadlock-api-ingest). x86 programs that link OpenSSL 3 under FEX use the copy in the [Steam Linux Runtime 4.0](https://gitlab.steamos.cloud/steamrt/steamrt) platform. Hooks written with `WriteProcessMemory` into code [FEX](https://github.com/FEX-Emu/FEX) has translated go through `/proc/<pid>/mem` again when the kernel refuses `process_vm_writev`, as [Wine](https://gitlab.winehq.org/wine/wine)'s `server/ptrace.c` wrote them before Wine 11. x86 Linux games under FEX get the same `/etc/asound.conf` that [pressure-vessel](https://gitlab.steamos.cloud/steamrt/steam-runtime-tools) writes into the Steam Linux Runtime, so ALSA plays through PulseAudio. Games render with [Mesa](https://gitlab.freedesktop.org/mesa/mesa) Turnip's own per-render-pass choice between tile memory and system memory, while the Steam client keeps `TU_DEBUG=sysmem`; [FEX](https://github.com/FEX-Emu/FEX)'s code disk cache was checked in its source and is already on through Proton. The proot fast path picks the guest name of a host file bound under several names in the order [PRoot](https://github.com/proot-me/proot)'s `path/binding.c` (GPL-2.0-or-later) sorts its bindings, so links and `/proc/self/fd` read back as they do through proot. The session's [PipeWire](https://gitlab.freedesktop.org/pipewire/pipewire) (MIT) opens its sockets with the per-socket access settings documented in its `module-access.c`, and [WirePlumber](https://gitlab.freedesktop.org/pipewire/wireplumber) (MIT) keeps those clients at full permissions through its `access.rules`. Wine write watches use the userfaultfd support in [Proton](https://github.com/ValveSoftware/wine)'s `dlls/ntdll/unix/virtual.c` (LGPL-2.1-or-later): libblsession gives it the arm64 syscall number and answers its `PAGEMAP_SCAN` from `/proc/self/pagemap` where Android refuses the ioctl. See [LICENSE](LICENSE). Steam and Proton belong to Valve Corporation; this project is not affiliated with Valve.
 
-### 3.2 准备哪些文件、放在哪里
+XR glasses support builds on WinNative's VITURE glasses work. VITURE protocol details were checked against [XRLinuxDriver](https://github.com/wheaney/XRLinuxDriver) by [@wheaney](https://github.com/wheaney), including the VITURE protocol header it ships, [ar-drivers-rs](https://github.com/badicsalex/ar-drivers-rs) by [@badicsalex](https://github.com/badicsalex) and the [go-macos/iokit VITURE package](https://pkg.go.dev/github.com/go-macos/iokit/viture); the optional VITURE SDK belongs to VITURE and is not included. RayNeo support adapts [@informalTechCode](https://github.com/informalTechCode)'s [RayNeo-Air-Series-3DoF-Scaffold](https://github.com/informalTechCode/RayNeo-Air-Series-3DoF-Scaffold) (Apache-2.0) and references [@verncat](https://github.com/verncat)'s [RayNeo-Air-3S-Pro-OpenVR](https://github.com/verncat/RayNeo-Air-3S-Pro-OpenVR) (MIT) and [Monado](https://gitlab.freedesktop.org/monado/monado) (BSL-1.0); see [docs/third-party/rayneo](docs/third-party/rayneo/README.md). XREAL 1S support references [XRLinuxDriver](https://github.com/wheaney/XRLinuxDriver) and [xrealOneDeviceKit](https://github.com/wheaney/xrealOneDeviceKit) by @wheaney, [xreal_one_driver](https://github.com/rohitsangwan01/xreal_one_driver) by [@rohitsangwan01](https://github.com/rohitsangwan01) (MIT) and [xr-tools](https://github.com/0xcaff/xr-tools) by [@0xcaff](https://github.com/0xcaff). Rokid support follows the Rokid protocol notes in [ar-drivers-rs](https://github.com/badicsalex/ar-drivers-rs) and @badicsalex's [Void Computing write-ups](https://voidcomputing.hu/blog/worse-better-prettier/), and [Monado](https://gitlab.freedesktop.org/monado/monado)'s Rokid driver. The REDMAGIC glasses-display findings draw on [@mekhontsev](https://github.com/mekhontsev)'s [MagicDesk investigation](https://github.com/mekhontsev/magicdesk/blob/main/docs/xr-resolution-fix.md) and [@Coding-BR](https://github.com/Coding-BR)'s [decompiled Nubia kernel](https://github.com/Coding-BR/android_kernel_nubia_sm8850_qwjujube). VITURE, RayNeo, XREAL, Rokid and REDMAGIC are trademarks of their owners; this project is not affiliated with them.
 
-#### 电脑上：全部放进仓库根目录的 `FirstLocalInstall\`
+Joy-Con VR controllers port the arm model of Google's [Google VR SDK for Unity](https://github.com/googlevr/gvr-unity-sdk) (Apache-2.0), adapt the hand skeleton of Valve's [OpenVR](https://github.com/ValveSoftware/openvr) `handskeletonsimulation` sample (BSD-3-Clause), which follows Moshi Turner's hand simulation in [Monado](https://gitlab.freedesktop.org/monado/monado), and use the Index controller offsets from Monado's `vive_poses.c` (BSL-1.0). Joy-Con behaviour was researched in Linux's [hid-nintendo](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo.c) driver by Daniel J. Ogorchock, [@dekuNukem](https://github.com/dekuNukem)'s [Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering), [SDL](https://github.com/libsdl-org/SDL) and the Android Open Source Project, and checked against [ALVR](https://github.com/alvr-org/ALVR), [OpenComposite](https://gitlab.com/znixian/OpenOVR), [PSMoveSteamVRBridge](https://github.com/HipsterSloth/PSMoveSteamVRBridge), [@F8LEFT](https://github.com/F8LEFT)'s [JoyConVr](https://github.com/F8LEFT/JoyConVr), [@krnelpan1c](https://github.com/krnelpan1c)'s [Daydream-Controller-SteamVR](https://github.com/krnelpan1c/Daydream-Controller-SteamVR), [@yoyobuae](https://github.com/yoyobuae)'s [joyconvr](https://github.com/yoyobuae/joyconvr), [Moonlight](https://github.com/moonlight-stream/moonlight-android) and [Dolphin](https://github.com/dolphin-emu/dolphin); see [docs/third-party/joycon](docs/third-party/joycon/README.md). Nintendo Switch and Joy-Con are trademarks of Nintendo; this project is not affiliated with Nintendo.
 
-| 文件名 | 是什么 | 必需 | 大小 | 从哪来 |
-|---|---|---|---|---|
-| `linuxfs.tar.zst` | Linux 运行环境（runtime） | **必需** | 754 MiB | 托管目录里的 runtime 一项 |
-| `proton-experimental-arm64-<build>.tar.zst` | Valve 的 Proton Experimental（ARM64）种子 | **必需** | 380 MiB | 托管目录里的 Proton 种子一项 |
-| `steam-client\`（文件夹，17 个 zip + manifest） | Steam 客户端本体 | **必需** | 344 MiB | 运行根目录的 `download-steam-client.bat` 自动下载 |
-| `desktop.tar.zst` | LXQt 桌面（含 Firefox、模拟器入口） | 推荐 | 406 MiB | 托管目录里的 desktop 一项 |
-| `fonts\`（文件夹，`.ttf` / `.ttc` / `.otf`） | 中文字体 | 推荐 | 自备 | 自行放入，随附简繁两款霞鹜文楷 |
-| `GE-Proton*.tar.gz` / `proton-cachyos*` | 第三方 Proton | 可选 | — | 各自的发布页 |
+Camera hand tracking runs Google's [MediaPipe](https://github.com/google-ai-edge/mediapipe) Tasks Vision library with its Pose Landmarker (Lite) model, BlazePose GHUM 3D, and its Hand Landmarker model (all Apache-2.0), on frames from AndroidX [CameraX](https://developer.android.com/jetpack/androidx/releases/camera) (Apache-2.0); MediaPipe's usage reports are switched off. The design was checked against [@F8LEFT](https://github.com/F8LEFT)'s [JoyConVr](https://github.com/F8LEFT/JoyConVr) camera app (MIT), and the short Joy-Con movements follow the accelerometer mode of the [Google VR SDK for Unity](https://github.com/googlevr/gvr-unity-sdk)'s arm model, Eric Foxlin's zero-velocity updates and Frosio, Pedersini and Borghese's accelerometer autocalibration, and the camera and Joy-Con are joined by a Kalman filter (R. E. Kalman, 1960). Bare camera hands take their gestures after [ALVR](https://github.com/alvr-org/ALVR)'s `hand_gestures.rs` (MIT) and Meta Quest's menu pinch, with distances checked on photos from the [HaGRID](https://github.com/hukenovs/hagrid) gesture set (CC BY-SA 4.0, not included), fit the palm with Horn's quaternion method (1987) and smooth it with the 1€ filter (Casiez, Roussel and Vogel, 2012); the white glove model follows Valve's OpenVR render model reference and Index controller poses, is meshed with surface nets (Gibson, 1998; Mikola Lysenko) and blends and shades it with Inigo Quilez's smooth minimum and distance-field ambient occlusion, porting his polygon distance (MIT); see [docs/third-party/handtracking](docs/third-party/handtracking/README.md).
 
-**前三项是必需的**，缺任何一项设备都跑不起来；后三项可选，装不装都不影响按钮能用。上述文件合计约 **1.9 GiB**（不含第三方 Proton）。
-
-文件名**不需要改**——安装时按文件名识别（`linuxfs*`、`proton*`、`desktop*`、`steam-client\`、`fonts\`），也用原作自己的名字去核对。
-
-#### 手机上：整个 `FirstLocalInstall` 文件夹拷进内部存储
-
-推荐位置：
-
-```
-/sdcard/Download/FirstLocalInstall
-```
-
-即手机内部存储的 `Download` 目录下。用数据线拷贝：
-
-```bat
-adb push FirstLocalInstall /sdcard/Download/
-```
-
-放在哪儿其实都行，只是后面选文件夹时好找。**不要解压**里面的 `.tar.zst`——它们是安装用的压缩包本身。
-
-### 3.3 操作步骤
-
-1. 装好本仓库构建出的 APK 并打开 DroidDeck
-2. 进入 **Steam → 游玩 Steam** 页面
-3. 点齿轮图标**右边**的 **「首次本地一键安装」** 按钮
-4. 在弹出的选择器里选中手机上的 `FirstLocalInstall` 文件夹（**选它的上一级 `/Download` 也可以**）
-5. 它开始按顺序自动安装，每步都显示进度；**已经装过的步骤会自动跳过**，所以可以反复点，也可以中途退出后重来
-
-## 四、从源码构建
-
-### Windows 一键构建（推荐）
-
-```bat
-build-apk.bat
-```
-
-它会自动完成：找 Android SDK / JDK 17+ / NDK、链接 NDK 到 Gradle 要求的位置、**从中国大陆地区的镜像取 Gradle 本体**（`gradlew` 会去 `services.gradle.org`，那个域名会重定向到 `github.com`，在中国大陆地区的网络下常连不上）、写入 `local.properties`、编译、**校验 APK 里真的带上了原生载荷**、签名，最后把包复制到 `dist\` 并打开该目录。
-
-产出：`dist\DroidDeckCOK-<版本>-release.apk`（`<版本>` 取自 `app/build.gradle` 的 `versionName`）
-
-所需环境：Android SDK（含 **Platform 34**，项目 `compileSdk 34`）、JDK 17 或更高、NDK `27.3.13750724`。
-
-常用参数：
-
-| 参数 | 作用 |
-|---|---|
-| `debug` | 构建 debug 变体 |
-| `clean` | 先清理再全量构建 |
-| `--own-key` / `--no-own-key` | 强制使用自有密钥签名 / 强制回退 AOSP testkey |
-| `--offline` | 离线构建 |
-| `--no-open` / `--no-pause` | 不打开产物目录 / 结束时不等待按键（适合脚本调用） |
-
-日志在 `build-logs\build-<变体>-<时间戳>.log`（判断成败看这里，不要只看 bat 的输出）。
-
-### Linux / Docker 构建
-
-上游原路径仍然保留：`tools/build_local.sh`（Docker + NDK）与 `tools/deploy_local.sh`（装到已连接的设备）。
-
-### 补齐必要文件这件事
-
-上游把一部分构建产物（37 个原生载荷，解包后约 18 MiB）交给 CI 用 Docker + NDK 现场生成，仓库里 `.gitignore` 掉、从不提交。这些文件是让 Linux 真正跑起来的东西——尤其 `lib/arm64-v8a/libproot.so`，它是 guest 的执行入口；缺了它，界面照常能开、运行环境也能装，但一点「游玩」就卡在加载界面。
-
-本仓库把它们**提取回源码树**，因此不装 Docker 也能在本机构建出功能完整的 APK；同时构建脚本多了一道**硬关卡**：载荷不全就直接判失败，不把残缺的包放进 `dist\`。
-
-## 五、签名说明（为什么本仓库是自己签的）
-
-GitHub 官方发布的 APK 由 DroidDeck 的发布密钥签名（证书 `CN=DroidDeck, O=The412Banner`，SHA-256 `b241ea7d…`）。**这把私钥只在作者的 CI 密钥库里，不公开**，所以本仓库不可能用它签名，只能**用自己的密钥重新签**。
-
-但如果只是随便换一把新密钥，Android 会把本包当成另一个应用，连本项目此前用公开 AOSP testkey 构建的旧包都无法覆盖安装。因此本仓库采用 **testkey → 自有密钥的 lineage 轮换**（与上游 CI 同一套做法）：同一个 APK 里，**v1 / v2 签名来自 AOSP testkey，v3 来自自有密钥**，Android 会把它记录为「由 testkey 升级而来」——本仓库签出的旧包因此可以**原地覆盖升级**，已下载的运行环境 / 种子 / 客户端不会丢。
-
-需要注意：
-
-- **本包与 GitHub 官方版不能互相覆盖安装**（签名不同）：装过官方版，必须先**卸载**再装本包；反过来也一样。
-- **只有本仓库签出的 APK 之间才能互相覆盖升级**：换成任何其他来源（官方版、他人改的版本），都只能卸载重装。
-- 这把密钥**一旦丢失就再也无法原地覆盖升级**，只能卸载重装——请务必把密钥与它的配置一起备份好。
-
-签名在 `build-apk.bat` 构建完成后自动进行。密钥与其口令（密码）**不随本仓库发布**，只留在本机一个 `.gitignore` 已排除的目录里；具体路径与用法见 `build-apk.bat` 的帮助文本与 `tools/release/sign-apk-local.py`。**没有这把密钥时构建不会失败**，会自动回退成 AOSP testkey 签名 —— 包照样能出，只是证明不了是同一把密钥签的；显式写 `--own-key` 时缺密钥才是硬错误。
-
-## 六、中文字体（随附的字体与许可）
-
-`FirstLocalInstall\fonts\` 里随附的是开源中文字体：
-
-- **简体中文 · 霞鹜文楷 / LXGW WenKai**（`LXGWWenKai-Regular.ttf`）— <https://github.com/lxgw/LxgwWenKai>
-- **繁体中文 · 霞鹜文楷 TC / LXGW WenKai TC**（`LXGWWenKaiTC-Regular.ttf`）— <https://github.com/lxgw/LxgwWenkaiTC>
-
-两者均以 **SIL Open Font License 1.1** 发布，可自由使用与再分发。你也可以把任意中文字体（`.ttf` / `.ttc` / `.otf`）放进这个文件夹，一键安装会把它们一并装进去。
-
-## 七、致谢与许可
-
-本项目基于 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck)，沿用其 **GPL-3.0** 许可，详见 [LICENSE](LICENSE)。
-
-运行环境、shim、输入与手柄相关工作建立在 WinNative 与 Bannerlator（maxjivi05）之上。LSFG 帧生成来自 Camille LaVey 与 [Eden](https://eden-emu.dev) 模拟器项目的工作，遵循 [lsfg-vk](https://github.com/PancakeTAS/lsfg-vk)，由 [@maxjivi05](https://github.com/maxjivi05) 移植到 WinNative 与 DroidDeck；它需要你自己购买 [Lossless Scaling](https://store.steampowered.com/app/993090/)，本身不附带其任何 shader。x86 AppImage 以及自身运行时无法解包的那些，使用 VHSgunzo 的 [uruntime](https://github.com/VHSgunzo/uruntime)（MIT）解包，原样附带其许可证。
-
-Steam 与 Proton 归 Valve Corporation 所有；本项目与 Valve 无隶属关系。
+The Store installs and runs apps with [Flatpak](https://github.com/flatpak/flatpak) (LGPL-2.1). Its sandbox goes through DroidDeck's own bubblewrap shim, which follows how Flatpak hands bwrap its environment. Chromium and Electron apps from Flathub start their browser processes through [zypak](https://github.com/refi64/zypak) by [@refi64](https://github.com/refi64) (BSD-3-Clause); its source was read to see that it always spawns them through Flatpak's spawn portal, which is why DroidDeck starts them directly without Chromium's sandbox instead.

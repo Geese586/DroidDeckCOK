@@ -12,11 +12,35 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path('app/build/runtime-inputs.json')
+# DroidDeckCOK: tools/packs/packs.lock decides which add-on packs travel inside the APK (bundled)
+# and which are only pinned by digest and fetched on demand. The bundled ones are hashed straight
+# out of app/src/main/assets/packs by app/build.gradle and unpacked from there by AddonPack.install;
+# the unbundled ones (tracking/xbox/comet, 42 MB together) never enter the APK.
+PACKS = Path('app/src/main/assets/packs')
+# A local copy of the unbundled archives, kept so this script can still compare their contents with
+# the runtime inputs. Ignored by git and optional: without it those comparisons are simply skipped.
+PACK_MIRROR = Path('build-logs/packs-mirror')
+PACK_LOCK = Path('tools/packs/packs.lock')
+
+# Runtime trees shipped as add-on packs (tools/packs/build.sh) rather than inside the APK.
+PACKED = {'assets/linuxfs/usr/local/lib/droiddeck-xbox/': 'xbox', 'assets/linuxfs/usr/local/lib/droiddeck-comet/': 'comet',
+          'assets/directaudio/': 'directaudio'}
+PACKED_FILES = {'lib/arm64-v8a/libproot.so': ('proot', 'libproot.so'),
+                'lib/arm64-v8a/libproot-loader.so': ('proot', 'libproot-loader.so')}
+PACKED_LIBRARIES = ['lib/arm64-v8a/libopencv_java4.so', 'lib/arm64-v8a/libmediapipe_tasks_jni.so']
+PACK_NAMES = ['proot', 'directaudio', 'tracking', 'xbox', 'comet']
 SOURCE_PATHS = ['app/build.gradle', 'app/src/main/cpp/fakeinput_steam.cpp', 'app/src/main/assets/pulseaudio.tzst',
                 'tools/linuxfs', 'tools/proot', 'tools/aaudio-sink', 'tools/directaudio',
                 'tools/gamescope/release.env', 'tools/droiddeck-esync/release.env',
-                'tools/mangoapp', 'tools/msitools', 'tools/build_local.sh',
-                'tools/release/runtime_inputs.py', 'app/src/main/assets/desktop-removal']
+                'tools/mangoapp', 'tools/msitools', 'tools/pipewire', 'tools/comet', 'tools/xbox', 'tools/build_local.sh',
+                'tools/release/runtime_inputs.py', 'app/src/main/assets/desktop-removal',
+                'tools/packs/packs.lock',
+                'tools/quest', 'tools/vr/src', 'tools/vr/driver_droiddeck', 'tools/vr/layer', 'tools/vr/build.sh',
+                'app/src/main/cpp/waylandcomp/src/headpose_shm.h',
+                'app/src/main/cpp/venc/venc_proto.h',
+                'app/src/main/cpp/waylandcomp/src/spatialpose_shm.h',
+                'app/src/main/cpp/adrenotools/src/hook/kgsl.h',
+                'app/src/main/assets/graphics_driver/adrenotools-turnip25.1.0.tzst']
 
 
 def digest(path):
@@ -34,11 +58,6 @@ def sources(root):
     for name in SOURCE_PATHS:
         path = root / name
         files.extend(path.rglob('*') if path.is_dir() else [path])
-    # as_posix(), not str(): on Windows str() of a relative Path spells the separators as "\",
-    # and every name here is compared against a "/" one - the required() list, the APK's own zip
-    # names in check_apk(), and a manifest CI wrote inside a Linux container. Upstream records on
-    # Linux, where the two agree; this fork records on Windows, where they do not. See the fork's
-    # archive README, section 0.
     return {path.relative_to(root).as_posix(): digest(path) for path in sorted(set(files))
             if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc'}
 
@@ -49,29 +68,50 @@ def outputs(root):
         base = root / 'app/src/main/assets' / tree
         for path in base.rglob('*'):
             if path.is_file() and not any(part.startswith('.') for part in path.relative_to(base).parts):
-                # Both sides as_posix(): the key is what required() and the zip's names are
-                # spelled with, and the value is read back through root / it, which takes "/".
-                result['assets/' + tree + '/' + path.relative_to(base).as_posix()] = \
-                    path.relative_to(root).as_posix()
+                result['assets/' + tree + '/' + path.relative_to(base).as_posix()] = path.relative_to(root).as_posix()
     for library in ['libproot.so', 'libproot-loader.so', 'libdirectaudiorelay.so']:
         result['lib/arm64-v8a/' + library] = 'app/src/main/jniLibs/arm64-v8a/' + library
     result['assets/pulseaudio.tzst'] = 'app/build/prepared-assets/pulseaudio.tzst'
+    result['assets/graphics_driver/adrenotools-turnip25.1.0-quest1.tzst'] = \
+        'app/build/prepared-assets/graphics_driver/adrenotools-turnip25.1.0-quest1.tzst'
+    for name in ['turnip26.3.0-a6xx', 'turnip26.3.0-quest2']:
+        result[f'assets/graphics_driver/adrenotools-{name}.tzst'] = \
+            f'app/build/prepared-assets/graphics_driver/adrenotools-{name}.tzst'
     return result
 
 
 def required():
-    paths = ['assets/linuxfs/' + name for name in ['libfakeinput.so', 'libblsession.so',
+    paths = ['assets/graphics_driver/adrenotools-turnip25.1.0-quest1.tzst']
+    paths += [f'assets/graphics_driver/adrenotools-{name}.tzst'
+              for name in ['turnip26.3.0-a6xx', 'turnip26.3.0-quest2']]
+    paths += ['assets/linuxfs/' + name for name in ['libfakeinput.so', 'libblsession.so',
              'libblfastpath.so', 'libssbs.so', 'usr/local/bin/droiddeck-clipboard',
-             'usr/local/bin/gamescope', 'usr/local/lib/droiddeck/uruntime']]
+             'usr/local/bin/gamescope', 'usr/local/lib/droiddeck/uruntime',
+             'usr/local/lib/droiddeck-pipewire.tzst']]
     for arch in ['x86_64', 'i386']:
         paths += ['assets/linuxfs/' + arch + '/' + lib for lib in ['libfakeinput.so', 'libblsession.so']]
     paths += ['assets/linuxfs/x86_64/' + lib for lib in
-              ['libfaultreport.so', 'libthunkaudit.so', 'libvulkan-thunk.so']]
+              ['libfaultreport.so', 'libvulkan-thunk.so', 'libwebkitinput.so']]
     paths += ['assets/linuxfs/i386/libfaultreport.so']
     paths += ['assets/linuxfs/usr/local/lib/droiddeck-msitools/' + name for name in
               ['msiinfo', 'cabextract', '7z', '7z.so', 'libmsi-1.0.so.0', 'libgsf-1.so.114', 'libgcab-1.0.so.0']]
+    paths += ['assets/linuxfs/usr/local/lib/droiddeck-vr/' + name for name in
+              ['droiddeck/bin/linuxarm64/driver_droiddeck.so', 'droiddeck/bin/linuxarm64/xr-display-mode',
+               'droiddeck/driver.vrdrivermanifest',
+               'droiddeck/resources/settings/default.vrsettings', 'layer/libVkLayer_droiddeck_vr.so',
+               'layer/VK_LAYER_DROIDDECK_vr.json', 'layer/VK_LAYER_DROIDDECK_vr_implicit.json',
+               'layer/libdroiddeck_vr_scheduling.so']]
+    for side in ['left', 'right']:
+        paths += [f'assets/linuxfs/usr/local/lib/droiddeck-vr/droiddeck/resources/rendermodels/droiddeck_hand_{side}/{name}'
+                  for name in [f'droiddeck_hand_{side}.json', 'hand.mtl', 'hand.png', 'hand_open.obj', 'hand_fist.obj',
+                               'thumb_index_open.obj', 'thumb_index_pinch.obj']]
     paths += ['assets/linuxfs/usr/local/lib/mangoapp/' + name for name in
               ['mangoapp', 'libfmt.so.10', 'libspdlog.so.1.13', 'libglfw.so.3', 'libtraceevent.so.1', 'libtracefs.so.1']]
+    paths += ['assets/linuxfs/usr/local/lib/droiddeck-comet/' + name for name in
+              ['comet', 'GalaxyCommunication.exe', 'update-permissions.exe', 'LICENSE', 'version']]
+    paths += ['assets/linuxfs/usr/local/lib/droiddeck-xbox/' + name for name in
+              ['xodus-cli', 'xodus-service', 'version', 'backend.lock.json', 'runtime.lock.json', 'LICENSE.xodus', 'LICENSE.nexus', 'LICENSE.LGPL-2.1', 'LICENSE.nghttp2',
+               'windows/xgameruntime.dll', 'windows/winhttp.dll', 'windows/windows.web.dll', 'windows/twinapi.appcore.dll', 'windows/libnghttp2.dll']]
     for driver in ['linux-wine11', 'linux-wine11-systhread']:
         paths += ['assets/directaudio/' + driver + '/' + name for name in
                   ['aarch64-unix/winedirectaudio.so', 'aarch64-windows/winedirectaudio.drv',
@@ -86,7 +126,6 @@ def required():
 
 
 def record(root=ROOT):
-    # Refresh scripts even on a CI native-cache hit; these are source, not cached binaries.
     if root == ROOT:
         from check_session_assets import source_assets
         for source, asset in source_assets().items():
@@ -103,7 +142,6 @@ def record(root=ROOT):
                 gzip.decompress((root / path).read_bytes())
             except (OSError, EOFError) as error:
                 raise ValueError('Invalid desktop removal inventory: ' + name) from error
-    # Check inside the compressed payload, where a plain Gradle build used to ship no sinks.
     process = subprocess.Popen(['zstd', '-dc', str(root / paths['assets/pulseaudio.tzst'])], stdout=subprocess.PIPE)
     try:
         with tarfile.open(fileobj=process.stdout, mode='r|') as archive:
@@ -139,10 +177,79 @@ def verify(root=ROOT):
     return data
 
 
+def pack_lock(root=ROOT):
+    return {name: spec for name, spec in json.loads((root / PACK_LOCK).read_text(encoding='utf-8')).items()
+            if not name.startswith('_')}
+
+
+def pack_digests(root, name):
+    """Contents of one add-on pack, or None when no local copy exists to read.
+
+    Only the bundled two are required to be in the tree. The rest are downloaded on demand and
+    pinned by digest alone, so a checkout without them is normal rather than broken - the caller
+    then checks what it can (that the APK does not carry them) and skips the content comparison.
+    """
+    path = root / PACKS / (name + '.tar.zst')
+    if not path.is_file():
+        if pack_lock(root)[name]['bundled']:
+            raise ValueError('Missing bundled add-on pack ' + str(path) + '.')
+        path = root / PACK_MIRROR / (name + '.tar.zst')
+        if not path.is_file():
+            return None
+    process = subprocess.Popen(['zstd', '-dc', str(path)], stdout=subprocess.PIPE)
+    digests = {}
+    try:
+        with tarfile.open(fileobj=process.stdout, mode='r|') as archive:
+            for member in archive:
+                if member.isfile():
+                    digests[member.name] = hashlib.sha256(archive.extractfile(member).read()).hexdigest()
+    finally:
+        process.stdout.close()
+    if process.wait():
+        raise ValueError('Invalid add-on pack ' + name)
+    return digests
+
+
 def check_apk(apk, root=ROOT):
     data = verify(root)
+    lock = pack_lock(root)
+    packs = {name: pack_digests(root, name) for name in PACK_NAMES}
     with ZipFile(apk) as package:
+        names = set(package.namelist())
+        # What the lock declares is what has to be in the package, byte for byte: the bundled two are
+        # the whole reason a device with no network can still run the one-click install, and an
+        # unbundled one showing up means 25 MB quietly came back.
+        for name, spec in lock.items():
+            asset = 'assets/packs/' + name + '.tar.zst'
+            if not spec['bundled']:
+                if asset in names:
+                    raise ValueError('APK carries ' + asset + ', which packs.lock leaves to the download')
+                continue
+            if asset not in names:
+                raise ValueError('APK is missing ' + asset + ', so the local install would need a network')
+            content = package.read(asset)
+            if hashlib.sha256(content).hexdigest() != spec['sha256']:
+                raise ValueError('APK carries a ' + asset + ' that is not the one packs.lock pins')
+        for library in PACKED_LIBRARIES:
+            if library in names:
+                raise ValueError('APK still carries ' + library + ', which the tracking pack provides')
+            if packs['tracking'] is not None and library.rsplit('/', 1)[1] not in packs['tracking']:
+                raise ValueError('Tracking pack missing ' + library)
         for name, output in data['outputs'].items():
+            if name in PACKED_FILES:
+                pack, rel = PACKED_FILES[name]
+                if name in names:
+                    raise ValueError('APK still carries ' + name + ', which the ' + pack + ' pack provides')
+                if packs[pack] is not None and packs[pack].get(rel) != output['sha256']:
+                    raise ValueError('Add-on pack ' + pack + ' is missing or has a stale ' + name)
+                continue
+            prefix = next((p for p in PACKED if name.startswith(p)), None)
+            if prefix:
+                if name in names:
+                    raise ValueError('APK still carries ' + name + ', which the ' + PACKED[prefix] + ' pack provides')
+                if packs[PACKED[prefix]] is not None and packs[PACKED[prefix]].get(name[len(prefix):]) != output['sha256']:
+                    raise ValueError('Add-on pack ' + PACKED[prefix] + ' is missing or has a stale ' + name)
+                continue
             try:
                 content = package.read(name)
             except KeyError:

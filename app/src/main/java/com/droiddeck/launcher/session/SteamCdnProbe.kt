@@ -3,6 +3,9 @@ package com.droiddeck.launcher.session
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Times Valve's two client-update edges from the device, so the CDN choice in Setup is an
@@ -18,6 +21,10 @@ import java.net.URL
  * The measurement runs off whatever thread calls it and touches nothing but the network: no pref
  * is written and no file is left behind. Reading a megabyte per edge costs the user two at most,
  * which is nothing against the 344 MB a client install moves.
+ *
+ * [measureAll] is what the two moments that fetch the client use (Setup's test and the start of a
+ * Steam session with no client in place): every edge at once, fastest first, so the report and the
+ * install that follows it are about the same order rather than about two separate probes.
  */
 object SteamCdnProbe {
     /** How one edge came out. [bytesPerSecond] is the component sample's rate, 0 when not measured. */
@@ -38,6 +45,13 @@ object SteamCdnProbe {
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 8_000
 
+    /**
+     * How an edge comes out when it was still going when the caller's budget ran out. Not the same
+     * as unreachable: it is a verdict about this test's patience, not about the network, and it is
+     * never turned into a recommendation.
+     */
+    const val TIMED_OUT = "timed out"
+
     fun measure(host: String): Edge = try {
         val manifest = fetch(host, SteamCdn.MANIFEST, null)
         val component = manifest.body?.let { firstComponent(it) }
@@ -45,6 +59,51 @@ object SteamCdnProbe {
         Edge(host, true, manifest.status, manifest.millis, rate, null)
     } catch (e: Exception) {
         Edge(host, false, 0, -1L, 0L, e.message ?: e.javaClass.simpleName)
+    }
+
+    /**
+     * Every edge in [hosts], measured at once and returned fastest first.
+     *
+     * [budgetMs] bounds the whole run rather than each edge: two edges on a working network answer
+     * in a second or two, and the caller of this is about to put a session on screen, so a run that
+     * has not answered by then is abandoned and reported as [TIMED_OUT] - the install still starts,
+     * it just starts without a pin. The abandoned threads are left to time out on their own
+     * connections; they write nothing anywhere.
+     */
+    @JvmStatic
+    fun measureAll(hosts: List<String>, budgetMs: Long): List<Edge> {
+        if (hosts.isEmpty()) return emptyList()
+        val pool = Executors.newFixedThreadPool(hosts.size)
+        val deadline = System.currentTimeMillis() + budgetMs
+        val edges = try {
+            hosts.map { host -> host to pool.submit(Callable { measure(host) }) }.map { (host, future) ->
+                val left = deadline - System.currentTimeMillis()
+                if (left <= 0) timedOut(host)
+                else try {
+                    future.get(left, TimeUnit.MILLISECONDS)
+                } catch (e: Exception) {
+                    timedOut(host)
+                }
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+        return ranked(edges)
+    }
+
+    /** What an edge that outlasted the budget reads as; see [TIMED_OUT]. */
+    private fun timedOut(host: String) = Edge(host, false, 0, -1L, 0L, TIMED_OUT)
+
+    /** [edges] fastest first; anything that moved no bytes - timed out or refused - goes last. */
+    @JvmStatic
+    fun ranked(edges: List<Edge>): List<Edge> = edges.sortedByDescending { it.bytesPerSecond }
+
+    /** The edge's name in the report: the network, because a DNS name means nothing to a user. */
+    @JvmStatic
+    fun label(host: String): String = when (host) {
+        SteamCdn.FASTLY_HOST -> "Fastly"
+        SteamCdn.AKAMAI_HOST -> "Akamai"
+        else -> host
     }
 
     private class Response(val status: Int, val millis: Long, val body: String?)

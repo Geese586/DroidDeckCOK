@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -80,6 +81,58 @@ class FirstLocalInstallTest {
         )
     }
 
+    @Test fun theNewestThirdPartyProtonOfEachBuildIsTheOneTaken() {
+        // The folder is the copy the user keeps up to date, and the archive it replaces is still
+        // beside the new one when the update lands - so the reading has to be by the numbers in the
+        // name. Sorting by name alone puts "11-7" before "11-9" and would install the build that
+        // was just replaced, which is the one thing an updated folder must not do.
+        folder.put("GE-Proton11-7-aarch64.tar.gz", 128)
+        folder.put("GE-Proton11-9-aarch64.tar.gz", 128)
+        folder.put("DroidDeck-Proton-11-7.5-aarch64.tar.gz", 160)
+        folder.put("DroidDeck-Proton-11-9.1-aarch64.tar.gz", 160)
+        val extras = FirstLocalInstall.found(folder).filter { it.part == FirstLocalInstall.Part.EXTRAS }
+        assertEquals(listOf("ge", "droiddeck"), extras.map { it.tool?.id })
+        assertEquals(
+            listOf("GE-Proton11-9-aarch64.tar.gz", "DroidDeck-Proton-11-9.1-aarch64.tar.gz"),
+            extras.map { it.source.name },
+        )
+    }
+
+    @Test fun aBrandIsItsKeywordAndOneNumberAwayFromTheNewestOfIt() {
+        // The rule the folder is read by, in the two shapes it comes in. One archive of a brand: the
+        // keyword in its name finds it and there is nothing to choose between.
+        folder.put("DroidDeck-Proton-11-9.1-aarch64.tar.gz", 160)
+        assertEquals(
+            listOf("DroidDeck-Proton-11-9.1-aarch64.tar.gz"),
+            FirstLocalInstall.found(folder).map { it.source.name },
+        )
+        // Several of one brand: the number decides, and 11-10 is the newer one even though its name
+        // sorts *before* 11-9 - which is the whole reason this is not a name comparison.
+        folder.put("GE-Proton11-9-aarch64.tar.gz", 128)
+        folder.put("GE-Proton11-10-aarch64.tar.gz", 128)
+        // And the same brand built for the other architecture is not a candidate at all, however
+        // high its number.
+        folder.put("GE-Proton11-99-x86_64.tar.gz", 128)
+        assertEquals(
+            listOf("GE-Proton11-10-aarch64.tar.gz", "DroidDeck-Proton-11-9.1-aarch64.tar.gz"),
+            FirstLocalInstall.found(folder).map { it.source.name },
+        )
+    }
+
+    @Test fun aBuildIsHeldOnlyWhenThatBuildIsTheOneInstalled() {
+        // An archive newer than what is installed is a step left to run, not a step already done:
+        // the folder is what the user updates, so the run has to carry the newer Proton in. Read by
+        // numbers - the tarball says "-11-9.1-aarch64", the folder it unpacks to says " 11-9.1".
+        assertTrue(FirstLocalInstall.holdsBuild("GE-Proton11-9", "GE-Proton11-9-aarch64.tar.gz"))
+        assertTrue(FirstLocalInstall.holdsBuild("DroidDeck-Proton 11-9.1", "DroidDeck-Proton-11-9.1-aarch64.tar.gz"))
+        assertFalse(FirstLocalInstall.holdsBuild("GE-Proton11-7", "GE-Proton11-9-aarch64.tar.gz"))
+        assertFalse(FirstLocalInstall.holdsBuild("DroidDeck-Proton 11-7.5", "DroidDeck-Proton-11-9.1-aarch64.tar.gz"))
+        // And never the other way round: a folder does not take a device back a build, so what is
+        // installed answers for an older archive and the step is done.
+        assertTrue(FirstLocalInstall.holdsBuild("GE-Proton11-10", "GE-Proton11-9-aarch64.tar.gz"))
+        assertFalse(FirstLocalInstall.holdsBuild(null, "GE-Proton11-9-aarch64.tar.gz"))
+    }
+
     @Test fun aThirdPartyProtonThatWentInIsNotReportedAsAnAbsentTool() {
         // The installer answers null for "the build went in", while the step's own tool is null
         // only when found() never made the step at all - and those two mean opposite things. A "?:"
@@ -129,6 +182,27 @@ class FirstLocalInstallTest {
         // nothing but the message - and still has to open.
         assertTrue(FirstLocalInstall.worthReporting(emptyList(), "OutOfMemoryError", false))
         assertTrue(FirstLocalInstall.failedSteps(emptyList()).isEmpty())
+    }
+
+    @Test fun onlyTheSteamClientStepIsWarnedAboutBeforeItStarts() {
+        // Ten-plus users read this wait as a hang, and it is the one step that is minutes of
+        // unpacking inside proot on a device with nothing wrong with it - so it is the one the
+        // screen says something about before it starts, and every other step stays as it was.
+        assertEquals(
+            listOf(FirstLocalInstall.Part.CLIENT),
+            FirstLocalInstall.Part.values().filter { FirstLocalInstall.longStep(it) },
+        )
+    }
+
+    @Test fun thatStepIsNotGivenUpOnBeforeTwentyMinutes() {
+        // What the users who waited it out and reached the next step asked for. Five minutes is
+        // shorter than the honest case there, so the warning it raised named a step that was already
+        // finished - the client's own progress never reached the watchdog at all. The rest of the
+        // run keeps the five.
+        assertTrue(FirstLocalInstall.stallMsFor(FirstLocalInstall.Part.CLIENT) > 20 * 60_000L)
+        assertEquals(300_000L, FirstLocalInstall.stallMsFor(FirstLocalInstall.Part.RUNTIME))
+        assertEquals(300_000L, FirstLocalInstall.stallMsFor(FirstLocalInstall.Part.DESKTOP))
+        assertEquals(300_000L, FirstLocalInstall.stallMsFor(FirstLocalInstall.Part.GPU))
     }
 
     private fun step(problem: String?): FirstLocalInstall.Outcome = FirstLocalInstall.Outcome(

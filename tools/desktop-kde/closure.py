@@ -15,7 +15,6 @@ REPOS = ("core", "extra", "alarm")
 
 
 def vercmp_part(a, b):
-    # rpmvercmp, as pacman compares version strings.
     if a == b:
         return 0
     sa = re.findall(r"\d+|[a-zA-Z]+", a)
@@ -73,8 +72,12 @@ def main():
     seeds = [l.strip() for l in open(seeds_file) if l.strip() and not l.lstrip().startswith("#")]
 
     pkgs, providers = {}, collections.defaultdict(list)
-    for repo in REPOS:
-        root = os.path.join(dbdir, "x_" + repo)
+    pins = os.path.join(os.path.dirname(__file__), "pins")
+    sources = [("extra", pins)]
+    sources.extend((repo, os.path.join(dbdir, "x_" + repo)) for repo in REPOS)
+    for repo, root in sources:
+        if not os.path.isdir(root):
+            continue
         for entry in sorted(os.listdir(root)):
             fields, key = {}, None
             for fname in ("desc", "depends"):
@@ -93,6 +96,8 @@ def main():
             name = fields.get("NAME", [None])[0]
             if not name or name in pkgs:
                 continue
+            if root == pins:
+                runtime.pop(name, None)
             provides = [parse_dep(p) for p in fields.get("PROVIDES", [])]
             pkgs[name] = {"repo": repo, "file": fields["FILENAME"][0], "version": fields["VERSION"][0],
                           "sha256": fields.get("SHA256SUM", [""])[0],
@@ -104,14 +109,11 @@ def main():
     def resolve(dep):
         """The package to take for a dependency string, and whether the runtime's copy serves."""
         name, op, want = parse_dep(dep)
-        # A runtime package that is the dependency or provides it, at a version that serves.
         if name in runtime and satisfies(runtime[name], op, want):
             return name, True
         candidates = providers.get(name, [])
         for real, _ in candidates:
             if real in runtime:
-                # A provided name (a soname, mostly): the runtime's build serves as long as it is
-                # the repository's own, or nothing asks for a particular version.
                 if not op or runtime[real] == pkgs[real]["version"]:
                     return real, True
                 if satisfies_provider(real, name, op, want):

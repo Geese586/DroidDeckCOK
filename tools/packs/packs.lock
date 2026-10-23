@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "DroidDeckCOK: every add-on pack this build knows about, pinned by content.",
+    "bundled=true  -> the archive lives in app/src/main/assets/packs and AddonPack unpacks it",
+    "                 straight out of the APK, so the first one-click install needs no network.",
+    "bundled=false -> the archive is NOT in the APK; AddonPack downloads it from",
+    "                 Droid-Deck/DroidDeck-Components at tag pack-<name>-<sha256[:16]> and",
+    "                 verifies the digest below. Losing the entry here would leave",
+    "                 BuildConfig.PACK_<NAME>_SHA256 empty, which makes AddonPack.available",
+    "                 false and the feature unable to install at all - silently.",
+    "app/build.gradle asserts both directions (bundled but missing, unbundled but present).",
+    "Refreshing for a new upstream: list releases of Droid-Deck/DroidDeck-Components, take",
+    "pack-<name>-<sha16> tags, and confirm sha256sum of the downloaded archive starts with",
+    "the same 16 characters."
+  ],
+  "proot": {
+    "bundled": true,
+    "size": 96643,
+    "sha256": "5a2b7284e6357f88a14a790abd54e61effbe5f202c63b6aaba9b974c559649c3"
+  },
+  "directaudio": {
+    "bundled": true,
+    "size": 22574,
+    "sha256": "fd65f0c1e68234cac18796cfd7d43dad46334988dad1eb20fc082952d83efa7e"
+  },
+  "tracking": {
+    "bundled": false,
+    "size": 25493162,
+    "sha256": "6b033308a33575947b75eee0bab093bf7dd58c57f71ed81ddc09a859f4df8dde"
+  },
+  "xbox": {
+    "bundled": false,
+    "size": 13023460,
+    "sha256": "72d90393b09d260558717215b58b1925345cc8d39d8980009fd062919c764e1d"
+  },
+  "comet": {
+    "bundled": false,
+    "size": 4170846,
+    "sha256": "fdc66ee6ae44ccdb119e18ed4c5b86a0cca200dc10ddcd1958a55c32ca42937f"
+  }
+}

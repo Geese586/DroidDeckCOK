@@ -47,3 +47,24 @@ fun FirstInstallReportDialog(text: String, onSave: () -> Unit, onDismiss: () -> 
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) } },
     )
 }
+
+/**
+ * The wrong-folder notice of the one-click install: the folder the user picked holds nothing this
+ * can install. It carries the addresses the offline package is downloaded from, so it stays up as
+ * a dialog until dismissed - a Toast had neither the room for two links and their codes nor the
+ * patience to be copied from. No title on purpose: the text itself says what went wrong.
+ */
+@Composable
+fun FirstLocalHintDialog(text: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+            ) {
+                Text(text, style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) } },
+    )
+}

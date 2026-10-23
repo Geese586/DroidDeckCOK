@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicReference
  *     desktop-kde.tar.zst                          the KDE desktop 0.4.0 pins (desktop-kde-r2)
  *     desktop-l10n.tar.zst                         the desktop's Chinese translations, optional
  *     fonts/                                       CJK fonts, for the desktop and everything else
- *     GE-Proton11-7-aarch64.tar.gz                 any third-party Proton, optional
+ *     GE-Proton11-9-aarch64.tar.gz                 any third-party Proton, optional
  *     proton-cachyos-<build>-arm64.tar.xz          ... one per build: GE-Proton, proton-cachyos
  *     DroidDeck-Proton-<build>-aarch64.tar.gz      and the project's own, each when it is there
  *     GPUDrivers/                                  the GPU drivers tab's "Export drivers" output
@@ -147,11 +147,14 @@ internal object FirstLocalInstall {
      * and last the folder of GPU drivers.
      *
      * One archive per thing, deliberately. The Proton seed installs into one place and the client
-     * is one tree, so a second archive of either would only overwrite the first; the name sorts
-     * them so which one is taken is at least the same on every run. The desktop is the same - one
-     * tar over the rootfs - and the fonts are one folder. The drivers are the exception that proves
-     * it: a folder of them is a step of its own, and every zip in it is put in, because each one is
-     * a driver rather than another copy of the same thing.
+     * is one tree, so a second archive of either would only overwrite the first, and a third-party
+     * build is one folder per build: the **newest** of them is the one taken. Newest by the numbers
+     * in the name, not by the name itself - a folder that still carries `GE-Proton11-7` beside
+     * `GE-Proton11-9` sorts `7` before `9`, and installing the older one is the opposite of what a
+     * folder whose archives were just brought up to date is for (see [ProtonExtras.compareVersions]).
+     * The desktop is the same - one tar over the rootfs - and the fonts are one folder. The drivers
+     * are the exception that proves it: a folder of them is a step of its own, and every zip in it
+     * is put in, because each one is a driver rather than another copy of the same thing.
      */
     fun found(folder: File): List<Found> {
         val entries = folder.listFiles()?.toList() ?: return emptyList()
@@ -159,8 +162,10 @@ internal object FirstLocalInstall {
         val out = mutableListOf<Found>()
         files.filter { it.name.lowercase().startsWith(RUNTIME_PREFIX) && it.name.lowercase().endsWith(ZST) }
             .minByOrNull { it.name }?.let { out += Found(Part.RUNTIME, it) }
+        // Valve's seed: `<build>` is a build number, so the newest is the one with the highest one.
         files.filter { it.name.lowercase().startsWith(PROTON_PREFIX) && it.name.lowercase().endsWith(ZST) }
-            .minByOrNull { it.name }?.let { out += Found(Part.PROTON, it) }
+            .maxWithOrNull { a, b -> ProtonExtras.compareVersions(a.name, b.name) }
+            ?.let { out += Found(Part.PROTON, it) }
         // The packages live in a folder of their own, but a folder picked for what is in it - the
         // steam-client directory itself - holds them directly, and that counts too.
         val packages = entries.firstOrNull { it.isDirectory && it.name.equals(PACKAGES, ignoreCase = true) }
@@ -188,9 +193,13 @@ internal object FirstLocalInstall {
             ?.takeIf { Fonts.fontFiles(it).isNotEmpty() }
             ?: folder.takeIf { Fonts.fontFiles(it).isNotEmpty() }
         fonts?.let { out += Found(Part.FONTS, it) }
+        // Newest build of each, for the reason the seed above takes the newest: the folder is the
+        // copy the user keeps up to date, and the old archive is not removed the moment a new one
+        // lands in it.
         for (tool in ProtonExtras.tools) {
             files.filter { it.name.startsWith(tool.prefix) && tool.assetPattern.containsMatchIn(it.name) }
-                .minByOrNull { it.name }?.let { out += Found(Part.EXTRAS, it, tool) }
+                .maxWithOrNull { a, b -> ProtonExtras.compareVersions(a.name, b.name) }
+                ?.let { out += Found(Part.EXTRAS, it, tool) }
         }
         // The drivers are the one part that is a folder of several files rather than one archive,
         // and the one where "one per thing" does not apply: each zip is a driver of its own, and the
@@ -252,7 +261,7 @@ internal object FirstLocalInstall {
         // without this a folder carrying the pack would keep the step, and the button, forever.
         Part.L10N -> l10nInstalled(context)
         Part.FONTS -> Fonts.installed(context, found.source)
-        Part.EXTRAS -> found.tool?.let { ProtonExtras.installed(context, it) != null } ?: false
+        Part.EXTRAS -> found.tool?.let { holdsBuild(ProtonExtras.installed(context, it), found.source.name) } ?: false
         // The folder of drivers counts as held only when every zip in it does: the step is the whole
         // folder, so one driver still missing keeps it - and the button - on offer.
         Part.GPU -> driverZips(found.source).all { zip ->
@@ -262,6 +271,33 @@ internal object FirstLocalInstall {
 
     /** [found] with everything the device already has taken out. */
     fun missing(context: Context, found: List<Found>): List<Found> = found.filterNot { installed(context, it) }
+
+    /**
+     * Whether [installed] - the newest build of a tool in `compatibilitytools.d`, or null when none
+     * is - is the build the archive named [archive] carries.
+     *
+     * The numbers, not the names. The archive is `DroidDeck-Proton-11-9.1-aarch64.tar.gz` and the
+     * folder it unpacks to is `DroidDeck-Proton 11-9.1` - a space in place of the first hyphen -
+     * and `aarch64` is architecture rather than version, so [ProtonExtras.versionKey] drops it.
+     *
+     * An older build is not the one in the folder: a device with `GE-Proton11-7` installed and
+     * `GE-Proton11-9` in the folder has one thing left to do, and "a build of this tool is
+     * installed" read it as nothing at all - the run then skipped the very build the folder had
+     * been updated for, silently, and left the older one to be what a game picks. A newer one is:
+     * the folder never asks for a downgrade, so `GE-Proton11-10` installed answers for `11-9`.
+     */
+    internal fun holdsBuild(installed: String?, archive: String): Boolean {
+        if (installed == null) return false
+        val have = ProtonExtras.versionKey(installed)
+        val want = ProtonExtras.versionKey(archive)
+        // A name carrying no numbers at all (nothing this folder ever holds) cannot be told apart
+        // from one that does, so the older answer - a build of the tool is installed - stands.
+        if (want.isEmpty()) return true
+        for (i in 0 until minOf(have.size, want.size)) if (have[i] != want[i]) return have[i] > want[i]
+        // Same numbers so far: a longer one is the newer build, so `11-9` installed does not answer
+        // for an archive of `11-9.1`, while `11-9.1` does answer for one of `11-9`.
+        return have.size >= want.size
+    }
 
     /**
      * The folder the last run read from, while it is still there. Null when none was ever picked,
@@ -317,11 +353,17 @@ internal object FirstLocalInstall {
      * so a step's own stage is never read as the whole run's. A step that fails does not stop the
      * ones after it - except the runtime, which nothing else can be installed without.
      *
-     * [onStall] is called once when a step has made no progress at all for [STALL_MS] - a device
-     * with a wedged proot child looks exactly like a slow one from here, and the screen says so
-     * rather than showing the same line for ever. Nothing is killed for it: the watchdog in
-     * [runtime.GuestOutput] is what gives up on a child of ours, and an unpack that is merely slow
-     * must not be cut off.
+     * [onStall] is called once for a step that has made no progress at all for that step's own
+     * budget - a device with a wedged proot child looks exactly like a slow one from here, and the
+     * screen says so rather than showing the same line for ever. The budget is [STALL_MS] for the
+     * run and [CLIENT_STALL_MS] for the Steam client, which is minutes of legitimate unpacking (see
+     * [stallMsFor]). Nothing is killed for it: the watchdog in [runtime.GuestOutput] is what gives
+     * up on a child of ours, and an unpack that is merely slow must not be cut off.
+     *
+     * [onLongStep] is told just before a step of [longStep]'s kind starts its work, and is expected
+     * to say so on screen before it returns. It is called before the work rather than alongside it
+     * because what follows is minutes of proot on a busy device: a message put up once the step is
+     * under way is a message that may not arrive at all.
      *
      * Every step boundary and every failure also goes to [FirstInstallLog], because the report that
      * ends a run is a Toast on a screen the user may not be looking at.
@@ -331,12 +373,15 @@ internal object FirstLocalInstall {
         found: List<Found>,
         onProgress: (Int, Int, String, Int) -> Unit,
         onStall: ((String, Int) -> Unit)? = null,
+        onLongStep: ((Int, Int, String) -> Unit)? = null,
     ): List<Outcome> {
         val started = System.currentTimeMillis()
         val lastEvent = AtomicLong(started)
         val current = AtomicReference(context.getString(R.string.common_working))
+        val stallMs = AtomicLong(STALL_MS)
+        val told = AtomicBoolean(false)
         val stopped = AtomicBoolean(false)
-        val watchdog = watchdog(context, started, lastEvent, current, stopped, onStall)
+        val watchdog = watchdog(context, started, lastEvent, current, stallMs, told, stopped, onStall)
         watchdog.start()
         val outcomes = mutableListOf<Outcome>()
         try {
@@ -348,12 +393,27 @@ internal object FirstLocalInstall {
                 FirstInstallLog.step(context, number, total, label, item.source)
                 onProgress(number, total, "Preparing…", -1)
                 lastEvent.set(System.currentTimeMillis())
+                // Each step gets its own silence budget and its own single warning: the clock is
+                // restarted here, so a warning held over from the step before would be measured
+                // against a step that has only just begun.
+                stallMs.set(stallMsFor(item.part))
+                told.set(false)
+                // Said before the work, not with it - see [onLongStep] in this function's comment.
+                if (longStep(item.part)) onLongStep?.invoke(number, total, label)
                 val seen = AtomicReference("Preparing…")
-                val listener = LinuxRuntimeInstaller.ProgressListener { stage, percent ->
+                // Every step reports through the one place that also feeds the watchdog, whatever
+                // shape its own progress arrives in. Four of the eight used to call the caller's
+                // own callback directly, and the Steam client's was the one that showed: minutes of
+                // it went by with the heartbeat never refreshed, so a healthy unpack was reported
+                // as a stall (DroidDeckCOK).
+                val report: (String, Int) -> Unit = { stage, percent ->
                     lastEvent.set(System.currentTimeMillis())
                     current.set(stage)
                     if (seen.getAndSet(stage) != stage) FirstInstallLog.stage(context, stage)
                     onProgress(number, total, stage, percent)
+                }
+                val listener = LinuxRuntimeInstaller.ProgressListener { stage, percent ->
+                    report(stage, percent)
                 }
                 val problem = try {
                     when (item.part) {
@@ -369,7 +429,7 @@ internal object FirstLocalInstall {
                         // to download. This path exists for a device that cannot reach Valve, and
                         // an install that waited on the CDN first would look like a hang.
                         Part.CLIENT -> SteamClient.installFromDir(context, item.source, localOnly = true) { stage, percent ->
-                            onProgress(number, total, stage, percent)
+                            report(stage, percent)
                         }
                         // The desktop unpacks over the rootfs like the runtime does, so it goes through
                         // the same extractor. 0.4.0 pins the desktop to one package - KDE, tagged
@@ -407,7 +467,7 @@ internal object FirstLocalInstall {
                                 null
                             } else "the desktop's translations could not be unpacked"
                         Part.FONTS -> Fonts.install(context, item.source) { stage, percent ->
-                            onProgress(number, total, stage, percent)
+                            report(stage, percent)
                         }
                         // syncPacks = false: no esync pack is looked up after a build goes in.
                         // That lookup is a request to GitHub, and every device does it by default
@@ -420,12 +480,12 @@ internal object FirstLocalInstall {
                             val tool = item.tool
                             val answer = if (tool == null) null
                             else ProtonExtras.installFromFile(context, tool, item.source, null, syncPacks = false) { stage, percent ->
-                                onProgress(number, total, stage, percent)
+                                report(stage, percent)
                             }
                             extrasProblem(tool, answer)
                         }
                         Part.GPU -> installDrivers(context, item.source) { stage, percent ->
-                            onProgress(number, total, stage, percent)
+                            report(stage, percent)
                         }
                     }
                 // Throwable, not Exception: an Error from under an extractor or a native library used
@@ -492,20 +552,44 @@ internal object FirstLocalInstall {
     private const val STALL_MS = 5L * 60 * 1000
 
     /**
-     * Writes a heartbeat every quarter minute and tells [onStall] once when a step has been quiet
-     * for [STALL_MS]. Never stops the work: an unpack of a 3 GB rootfs is quiet for minutes at a
-     * time on a slow card, and cutting that off would turn a slow install into a failed one. A
-     * child of ours that is really wedged is the other watchdog's business ([runtime.GuestOutput]).
+     * The Steam client's own budget: the 344 MB of packages it installs are verified and unpacked
+     * inside proot, and ten minutes over that is a device behaving normally rather than one that
+     * has wedged - which is what more than ten users reported it as, waiting it out and reaching
+     * the next step. Five minutes there was a false alarm every time, and the alarm it raised named
+     * the step before it (see [stallMsFor] and this file's own history in the project archive).
+     */
+    private const val CLIENT_STALL_MS = 30L * 60 * 1000
+
+    /** The silence [part]'s step is judged by. */
+    internal fun stallMsFor(part: Part): Long = if (longStep(part)) CLIENT_STALL_MS else STALL_MS
+
+    /**
+     * Whether [part] is the step the screen warns about before it starts, and the one the watchdog
+     * holds off longest for.
+     *
+     * The Steam client, and only it: every other step either unpacks on this side - where the
+     * progress bar now moves the whole way through - or finishes in seconds. This one hands 344 MB
+     * to proot's own unpacker, which is minutes on a slow card with nothing wrong with it at all.
+     */
+    internal fun longStep(part: Part): Boolean = part == Part.CLIENT
+
+    /**
+     * Writes a heartbeat every quarter minute and tells [onStall] once per step when it has been
+     * quiet for that step's budget ([stallMs], restarted at every step boundary). Never stops the
+     * work: an unpack of a 3 GB rootfs is quiet for minutes at a time on a slow card, and cutting
+     * that off would turn a slow install into a failed one. A child of ours that is really wedged is
+     * the other watchdog's business ([runtime.GuestOutput]).
      */
     private fun watchdog(
         context: Context,
         started: Long,
         lastEvent: AtomicLong,
         current: AtomicReference<String>,
+        stallMs: AtomicLong,
+        told: AtomicBoolean,
         stopped: AtomicBoolean,
         onStall: ((String, Int) -> Unit)?,
     ): Thread = Thread({
-        var told = false
         while (!stopped.get()) {
             try {
                 Thread.sleep(15_000)
@@ -516,8 +600,8 @@ internal object FirstLocalInstall {
             val now = System.currentTimeMillis()
             val quiet = now - lastEvent.get()
             FirstInstallLog.heartbeat(context, current.get(), now - started, quiet)
-            if (!told && quiet >= STALL_MS) {
-                told = true
+            if (!told.get() && quiet >= stallMs.get()) {
+                told.set(true)
                 val minutes = (quiet / 60_000).toInt()
                 FirstInstallLog.note(context, "no progress for $minutes min; still at \"${current.get()}\"")
                 onStall?.invoke(current.get(), minutes)

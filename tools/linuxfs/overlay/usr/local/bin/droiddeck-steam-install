@@ -1,23 +1,89 @@
 #!/bin/bash
-# Fetches the native arm64 Steam client from Valve's client-update CDN into ~/.local/share/Steam.
-# The client is not redistributable, so the runtime ships this script instead of the client.
 set -eu
 # Valve serves the same packages from more than one set of edge hosts, and both the speed and the
 # reachability of each are properties of the network the device is on rather than of the device. A
 # component one of them will not serve is therefore tried on the next, which is the difference
 # between an install and "the download never started". BL_STEAM_CDN pins a single host - a host
 # name, or a full URL including the scheme - and is then used alone, because a pinned host is a
-# deliberate override rather than a preference.
+# deliberate override rather than a preference. BL_STEAM_CDN_ORDER is the other half: the two hosts
+# the app just timed, fastest first, space-separated. It says which edge to TRY first while keeping
+# the other as the fallback, so a measured lead of half again is used instead of dismissed - the
+# case that had 675 KB/s running ahead of a measured 1.0 MB/s because nothing but a 2x lead ever
+# changed the order. Ignored when BL_STEAM_CDN names a host: an override is an override.
 cdn_fastly=https://client-update.fastly.steamstatic.com
 cdn_akamai=https://client-update.akamai.steamstatic.com
-bl_cdn_hosts() {
-  case ${BL_STEAM_CDN:-} in
-    "") printf '%s\n%s\n' "$cdn_fastly" "$cdn_akamai" ;;
-    fastly|official) printf '%s\n' "$cdn_fastly" ;;
-    akamai) printf '%s\n' "$cdn_akamai" ;;
-    *) printf '%s\n' "$BL_STEAM_CDN" ;;
+# Every entry is a URL by the time it reaches curl. BL_STEAM_CDN may name a host or a full URL
+# (see above) and BL_STEAM_CDN_ORDER names hosts, because that is what the app's line test
+# resolves and times - and bl_fetch builds "$host/$file", so an entry without a scheme would be
+# handed to curl as `client-update.akamai.steamstatic.com/steam_client_...`, which curl reads as
+# HTTP (Valve redirects or refuses it) rather than as the edge the app measured. Completing it
+# here keeps the app's side of the protocol to plain host names.
+bl_cdn_url() {
+  case $1 in
+    *://*) printf '%s\n' "$1" ;;
+    *) printf 'https://%s\n' "$1" ;;
   esac
 }
+bl_cdn_hosts() {
+  local h want
+  # A tap leads the queue, a pin included, and it is read here as well as while a file is coming
+  # down. So a choice made before the first byte moves decides where the download starts, instead
+  # of being honoured by killing a fetch a second later: on a first run the list on screen used to
+  # be visible and deaf until the install step began, and this is what makes it answer at once.
+  want=$(bl_edge_url "$(bl_wanted)")
+  case $want in
+    "")
+      case ${BL_STEAM_CDN:-} in
+        "")
+          if [ -n "${BL_STEAM_CDN_ORDER:-}" ]; then
+            for h in ${BL_STEAM_CDN_ORDER}; do bl_cdn_url "$h"; done
+          else
+            printf '%s\n%s\n' "$cdn_fastly" "$cdn_akamai"
+          fi ;;
+        fastly|official) printf '%s\n' "$cdn_fastly" ;;
+        akamai) printf '%s\n' "$cdn_akamai" ;;
+        *) bl_cdn_url "$BL_STEAM_CDN" ;;
+      esac
+      return 0 ;;
+  esac
+  # The tapped edge goes first and both edges stay behind it, so a tap can never turn a slow
+  # install into a failed one.
+  printf '%s\n' "$want"
+  if [ -n "${BL_STEAM_CDN_ORDER:-}" ]; then
+    for h in ${BL_STEAM_CDN_ORDER}; do
+      [ "$(bl_cdn_url "$h")" = "$want" ] || bl_cdn_url "$h"
+    done
+  else
+    [ "$cdn_fastly" = "$want" ] || printf '%s\n' "$cdn_fastly"
+    [ "$cdn_akamai" = "$want" ] || printf '%s\n' "$cdn_akamai"
+  fi
+}
+# The edge the user tapped on the loading screen. The app owns that file and writes the name of an
+# edge into it - or deletes it, which means "automatic"; this script only reads it, once a second
+# while a file is coming down. It is the channel droiddeck-session already uses for steam-stop and
+# steam-game, so nothing new has to cross the proot boundary and no process has to be signalled.
+#
+# A tap outranks everything else for the rest of this run, a pin included: BL_STEAM_CDN came from a
+# menu or from a measurement that may be a minute old, while the tap is the user's hand, now.
+bl_line_file=${BL_LAUNCH_DIR:-}/steam-line
+bl_wanted() {
+  [ -n "${BL_LAUNCH_DIR:-}" ] || return 0
+  [ -f "$bl_line_file" ] || return 0
+  head -n 1 "$bl_line_file" 2>/dev/null | tr -d ' \r' || true
+}
+bl_edge_url() {
+  case ${1:-} in
+    fastly|official) printf '%s' "$cdn_fastly" ;;
+    akamai) printf '%s' "$cdn_akamai" ;;
+    *) printf '' ;;
+  esac
+}
+bl_current_host=
+# What the user last asked for, so a tap is acted on once rather than every second: the script
+# reacts only when the name CHANGES. Empty at the start, which also means a tap made before this
+# run got going (normally none - the app clears the file at session start) is honoured on the
+# first fetch instead of being ignored until the second tap.
+bl_line_seen=
 # How far along the download is, as a line the loading screen shows. The per-component counter
 # only moves when a component finishes, and one component is 105 MB - the screen would sit on the
 # same count for a minute. Fractions of a percent, so the number creeps instead of jumping: a
@@ -26,9 +92,22 @@ bl_cdn_hosts() {
 bl_have=0
 bl_total=0
 bl_shown=-1
+bl_rate_at=0
 bl_progress() {
   [ "${bl_total:-0}" -gt 0 ] || return 0
   local now=$(( (bl_have + ${1:-0}) * 1000 / bl_total ))
+  local rate=${2:-}
+  if [ -n "$rate" ]; then
+    # A rate goes out even when the percent does not move: without it a line delivering 40 KB/s
+    # looks exactly like a line delivering nothing, and those are the two cases the user is trying
+    # to tell apart when they decide to tap another edge.
+    if [ "$now" -gt "$bl_shown" ] || [ $((SECONDS - bl_rate_at)) -ge 2 ]; then
+      bl_shown=$now
+      bl_rate_at=$SECONDS
+      printf '== PROGRESS %d.%d %s B/s\n' $((now / 10)) $((now % 10)) "$rate"
+    fi
+    return 0
+  fi
   if [ "$now" -gt "$bl_shown" ]; then
     bl_shown=$now
     printf '== PROGRESS %d.%d\n' $((now / 10)) $((now % 10))
@@ -47,15 +126,54 @@ bl_progress() {
 # crawl. A pinned BL_STEAM_CDN leaves nothing to switch to and is never abandoned.
 bl_slow_window=${BL_SLOW_WINDOW:-30}
 bl_slow_bytes=${BL_SLOW_BYTES:-4194304}
+# A floor under *every* fetch, measured by curl itself: the rule above only reaches a host that has
+# another one behind it. The last host in the queue is deliberately left unmeasured - it is the wait
+# the user asked for and there is nothing to switch to - and the manifest, fetched before any
+# component and with no count line of its own, was left out of it in the same way. A CDN that
+# accepts the connection and then sends nothing therefore hung one of those two fetches for as long
+# as it cared to, which on screen is "Preparing…" and nothing else until GuestOutput's ten-minute
+# deadline killed the whole step (DroidDeckCOK). Slower than this for this long and curl gives up by
+# itself, so the retry loop moves on and the folder's own copy is what installs.
+bl_min_speed=${BL_MIN_SPEED_BYTES:-1024}
+bl_min_window=${BL_MIN_SPEED_WINDOW:-20}
 bl_slow_measure=0
 bl_download() {
-  local pid seen start=$SECONDS
-  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 "$1" -o "$2" &
+  local pid seen start=$SECONDS prev_seen=0 prev_at=$SECONDS rate want
+  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 \
+    --speed-limit "$bl_min_speed" --speed-time "$bl_min_window" "$1" -o "$2" &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
     seen=$(wc -c < "$2" 2>/dev/null || echo 0)
-    bl_progress "${seen:-0}"
+    # Bytes per second over the last second: "how far along" and "is it moving at all" are two
+    # different questions, and this is the second one.
+    if [ $((SECONDS - prev_at)) -ge 1 ]; then
+      rate=$(( (${seen:-0} - prev_seen) / (SECONDS - prev_at) ))
+      [ "$rate" -ge 0 ] || rate=0
+      prev_seen=${seen:-0}
+      prev_at=$SECONDS
+    else
+      rate=
+    fi
+    bl_progress "${seen:-0}" "$rate"
+    # A tap on the loading screen wins over every rule here, including a pin - and "automatic" is
+    # one of the taps: it means the edge at the front of the measured order, which is a change like
+    # any other when the run had been switched somewhere else. Only a CHANGE counts, or the script
+    # would restart the file every second on whichever edge it happens to be using.
+    want=$(bl_wanted)
+    if [ "$want" != "$bl_line_seen" ]; then
+      bl_line_seen=$want
+      demand=$(bl_edge_url "$want")
+      if [ -z "$demand" ]; then
+        demand=$(bl_cdn_hosts | head -n 1)
+      fi
+      if [ -n "$demand" ] && [ "$demand" != "$bl_current_host" ]; then
+        echo "== STEP $(date -u +%H:%M:%S) switching this download to ${demand#https://} on request"
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        return 3
+      fi
+    fi
     if [ "$bl_slow_measure" = 1 ] && [ $((SECONDS - start)) -ge "$bl_slow_window" ] \
         && [ "${seen:-0}" -lt "$bl_slow_bytes" ]; then
       echo "== STEP $(date -u +%H:%M:%S) this CDN edge is slow ($(bl_size "${seen:-0}") in ${bl_slow_window}s); trying the other one"
@@ -66,6 +184,11 @@ bl_download() {
   done
   wait "$pid"
 }
+# What the component loop below hands bl_fetch for the one line it prints: the component's name and
+# "<i>/<total>, <size>". Empty for the manifest, which is fetched before any component and has
+# neither - and which then prints no line of its own (set -u is on, so they are set here).
+bl_block=
+bl_step=
 # One file, from whichever host will serve it. Moving on to the next host is announced as a
 # "== STEP" line: on screen a retry on the other edge reads as the wait making progress, where
 # going quiet for another two minutes reads as a hang.
@@ -75,31 +198,76 @@ bl_was_abandoned() {
   return 1
 }
 bl_fetch() {
-  local file=$1 dest=$2 host first=1 candidate rc i=0
+  local file=$1 dest=$2 host first=1 candidate rc i=0 bl_tapped
   local -a queue=() abandoned=()
   while IFS= read -r candidate; do [ -n "$candidate" ] && queue+=("$candidate"); done < <(bl_cdn_hosts)
   while [ "$i" -lt "${#queue[@]}" ]; do
     host=${queue[i]}
     if [ "$first" = 1 ]; then
       first=0
+      # The component's own line is written here rather than by the caller, because this is where
+      # the edge is picked: it names the host the bytes will come from, next to the count and the
+      # size. The Steam client's install was the one download in the app that never said where it
+      # was coming from (DroidDeckCOK) - the runtime's own has named its mirror for as long as the
+      # loading screen has shown one - so "which line is this on, and was it the fastest one" had
+      # no answer on screen while 344 MB came down. Empty for the manifest, which is fetched
+      # before any component and has no count to print.
+      [ -n "$bl_step" ] && echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $bl_block ($bl_step, from ${host#https://})"
     else
       echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $file (again, from ${host#https://})"
     fi
     # Measured only while something else is left to switch to, and never again once this fetch has
     # abandoned the host for slowness: the re-queued copy at the end is the deliberate wait.
-    if [ "$i" -lt "$(( ${#queue[@]} - 1 ))" ] && ! bl_was_abandoned "$host"; then
+    #
+    # An edge the user tapped is never measured at all. The rule exists for the edge nobody chose;
+    # applied to a tap it read the choice off the chip and put the bytes back on the other edge
+    # thirty seconds later, which on screen is a switch that does nothing. A tapped edge that stops
+    # answering altogether still falls through to the other one below (that is rc, not speed).
+    bl_tapped=$(bl_edge_url "$(bl_wanted)")
+    if [ -n "$bl_tapped" ] && [ "$host" = "$bl_tapped" ]; then
+      bl_slow_measure=0
+    elif [ "$i" -lt "$(( ${#queue[@]} - 1 ))" ] && ! bl_was_abandoned "$host"; then
       bl_slow_measure=1
     else
       bl_slow_measure=0
     fi
     rc=0
+    bl_current_host=$host
     bl_download "$host/$file" "$dest" || rc=$?
     [ "$rc" = 0 ] && return 0
+    if [ "$rc" = 3 ]; then
+      local want
+      want=$(bl_edge_url "$(bl_wanted)")
+      # "Automatic" is a tap too: it means the edge at the front of what this run would have used
+      # anyway, so it is read from the same place bl_fetch took its queue from.
+      [ -n "$want" ] || want=$(bl_cdn_hosts | head -n 1)
+      if [ -n "$want" ]; then
+        # The tapped edge goes first and BOTH edges stay behind it, so a tap can never turn a slow
+        # install into a failed one - which is exactly what switching to a pinned host would do.
+        # The file starts over: a component is one zip named after its own checksum, so a
+        # half-fetched copy is worth nothing and would be thrown away either way.
+        queue=("$want")
+        [ "$cdn_fastly" = "$want" ] || queue+=("$cdn_fastly")
+        [ "$cdn_akamai" = "$want" ] || queue+=("$cdn_akamai")
+        abandoned=()
+        i=0
+        first=0
+        bl_shown=-1
+        if [ -n "$bl_step" ]; then
+          echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $bl_block ($bl_step, from ${want#https://})"
+        else
+          echo "== STEP $(date -u +%H:%M:%S) asking ${want#https://} for the Steam client manifest"
+        fi
+        continue
+      fi
+    fi
     if [ "$rc" = 2 ]; then
       abandoned+=("$host")
       queue+=("$host")
       echo "== STEP $(date -u +%H:%M:%S) $file goes back to ${host#https://} after the other edge is tried"
     fi
+    # Every retry starts this file over at zero bytes, so the bar has to be allowed to go back.
+    bl_shown=-1
     i=$((i + 1))
   done
   echo "droiddeck-steam-install: $file came down from no CDN host" >&2
@@ -123,7 +291,31 @@ bl_size() {
 # trusted either way: the manifest still supplies every component's sha256 and it is still checked.
 local_dir=${BL_STEAM_LOCAL_DIR:-}
 local_only=${BL_STEAM_LOCAL_ONLY:-}
-steam_channel=${BL_STEAM_CHANNEL:-steamdeck_publicbeta}
+# Upstream 0.5.0's x86-64 client path calls this script as
+# `droiddeck-steam-install --sync steamdeck_publicbeta` to bring the arm64 parts up to date
+# before FEX starts the x86-64 client. A sync is exactly what BL_STEAM_SYNC=1 already means here
+# (read Valve's manifest, fetch only the components whose names changed), so the option only sets
+# the channel and that flag.
+sync_channel=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --sync) shift; sync_channel=${1:-steamdeck_publicbeta} ;;
+    --sync=*) sync_channel=${1#--sync=} ;;
+    "") ;;
+    *) echo "droiddeck-steam-install: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+if [ -n "$sync_channel" ]; then
+  BL_STEAM_SYNC=1
+  export BL_STEAM_SYNC
+fi
+# Upstream's own name for the same thing: non-empty means "this run is a sync, and this is the
+# channel it is syncing". Its later steps branch on it (the client's manifest record, in place of
+# the beta file), and the fork's branches on BL_STEAM_SYNC, so both are kept in step here rather
+# than one of them reading as an unset variable under `set -u`.
+sync=$sync_channel
+steam_channel=${sync_channel:-${BL_STEAM_CHANNEL:-steamdeck_publicbeta}}
 case "$steam_channel" in
   publicbeta|steamdeck_publicbeta) ;;
   *) echo "droiddeck-steam-install: unsupported Steam channel: $steam_channel" >&2; exit 1 ;;
@@ -166,12 +358,30 @@ fi
 # recognise, so it went to Valve every launch - a manifest, and then whatever had changed since -
 # for a client that was already there. Backfilled from the folder, which is where it can come from
 # without a network.
-if [ -x "$steam_root/steamrtarm64/steam" ] && [ -f "$stamp" ]; then
+bl_installed=0
+# The stamp is what says an install finished - it is written last - so the binary only has to be
+# there. It was tested with -x, which is the same question asked second-hand: this script is what
+# sets that bit (chmod +x below, and the client's own unpacker after it), and a checkout that
+# cannot express it made every "an installed client is left alone" path invisible to the tests.
+if [ -f "$steam_root/steamrtarm64/steam" ] && [ -f "$stamp" ]; then
+  bl_installed=1
   if [ ! -f "$steam_root/package/$manifest.manifest" ] && [ -n "$local_dir" ] \
       && [ -f "$local_dir/$manifest" ]; then
     cp -f "$local_dir/$manifest" "$steam_root/package/$manifest.manifest"
     echo "== STEP $(date -u +%H:%M:%S) wrote the client's own record of what is installed"
   fi
+fi
+# An installed client normally starts here, and its own bootstrapper brings it up to date. That
+# update is a download of tens to hundreds of megabytes that this script never sees: the loading
+# screen's edge menu would then be a row of chips that changes nothing, because the only thing
+# downloading is the client on the other side of the guest (DroidDeckCOK - "switching between them
+# makes no difference to the speed").
+#
+# BL_STEAM_SYNC=1 - set by "advanced play", the button whose whole promise is that download riding
+# the edge you pick - moves that update back here: Valve's manifest is read, the components whose
+# names changed are fetched through this same queue, and the client starts already current. Play
+# does not set it, so Play costs what it always did: nothing when the client is in place.
+if [ "$bl_installed" = 1 ] && { [ -z "${BL_STEAM_SYNC:-}" ] || [ -n "$local_only" ]; }; then
   exit 0
 fi
 
@@ -192,26 +402,50 @@ if [ -n "$local_only" ]; then
     echo "droiddeck-steam-install: $manifest is not in $local_dir and the device is offline" >&2; exit 1; }
   echo "== STEP $(date -u +%H:%M:%S) reading the Steam client manifest from the local copy (offline)"
   cp -f "$local_manifest" "$work/manifest"
-elif bl_fetch "$manifest" "$work/manifest"; then
-  if [ -n "$local_manifest" ]; then
-    local_version=$(manifest_version "$local_manifest")
-    if [ -n "$local_version" ] && [ "$(manifest_version "$work/manifest")" -le "$local_version" ] 2>/dev/null; then
-      echo "== STEP $(date -u +%H:%M:%S) the local Steam client copy is current ($local_version)"
-      cp -f "$local_manifest" "$work/manifest"
-    else
-      echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client is newer ($local_version -> $(manifest_version "$work/manifest")); taking only the changed components from it"
-    fi
-  else
-    echo "== STEP $(date -u +%H:%M:%S) reading Valve's Steam client manifest"
-  fi
-elif [ -n "$local_manifest" ]; then
-  echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client manifest is unreachable; installing from the local copy"
-  cp -f "$local_manifest" "$work/manifest"
 else
-  echo "droiddeck-steam-install: could not read $manifest from Valve or from $local_dir" >&2
-  exit 1
+  # Said before the fetch rather than after it (DroidDeckCOK): the manifest is one small file with
+  # no component count, so the line bl_fetch writes for a component has nothing to say here and it
+  # writes none - which left the screen on the step's own "Preparing…" for as long as the fetch
+  # took, with nothing at all to say it was the manifest being waited on.
+  echo "== STEP $(date -u +%H:%M:%S) asking Valve for the Steam client manifest"
+  if bl_fetch "$manifest" "$work/manifest"; then
+    if [ -n "$local_manifest" ]; then
+      local_version=$(manifest_version "$local_manifest")
+      if [ -n "$local_version" ] && [ "$(manifest_version "$work/manifest")" -le "$local_version" ] 2>/dev/null; then
+        echo "== STEP $(date -u +%H:%M:%S) the local Steam client copy is current ($local_version)"
+        cp -f "$local_manifest" "$work/manifest"
+      else
+        echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client is newer ($local_version -> $(manifest_version "$work/manifest")); taking only the changed components from it"
+      fi
+    fi
+  elif [ -n "$local_manifest" ]; then
+    echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client manifest is unreachable; installing from the local copy"
+    cp -f "$local_manifest" "$work/manifest"
+  elif [ "$bl_installed" = 1 ]; then
+    # A sync that cannot read Valve's manifest is not an install that failed: the client on the
+    # disk is the one the next launch would have started anyway. Leaving it to the network is the
+    # only thing that turns a blocked edge into a session that will not open.
+    echo "== STEP $(date -u +%H:%M:%S) Valve's Steam client manifest is unreachable; starting the client that is installed"
+    exit 0
+  else
+    echo "droiddeck-steam-install: could not read $manifest from Valve or from $local_dir" >&2
+    exit 1
+  fi
 fi
 version=$(manifest_version "$work/manifest")
+# Nothing to do, said out loud: a sync of a client that is already current would otherwise unpack
+# every component it just re-used and call that an update. The record is the client's own
+# (package/<manifest>.manifest), which its bootstrapper keeps up to date even when the client
+# updated itself; the stamp is what an install writes and the fallback when the record is missing.
+if [ "$bl_installed" = 1 ]; then
+  bl_recorded=$(manifest_version "$steam_root/package/$manifest.manifest" 2>/dev/null || true)
+  [ -n "${bl_recorded:-}" ] || bl_recorded=$(cat "$stamp" 2>/dev/null || true)
+  if [ -n "${bl_recorded:-}" ] && [ "$version" -le "$bl_recorded" ] 2>/dev/null; then
+    echo "== STEP $(date -u +%H:%M:%S) the Steam client is up to date ($version) - starting it as it is"
+    exit 0
+  fi
+  echo "== STEP $(date -u +%H:%M:%S) Valve has a newer Steam client (${bl_recorded:-?} -> $version); fetching the changed components through this line"
+fi
 # Every component block: its name, then the plain zip's file name, size and sha256.
 awk -F'"' '
   /^\t"/ && NF >= 3 && $4 == "" { block = $2 }
@@ -253,19 +487,35 @@ bl_intact() { echo "$2  $1" | sha256sum -c --quiet >/dev/null 2>&1; }
 mkdir -p "$steam_root/package"
 while read -r block file size sum; do
   i=$((${i:-0} + 1))
+  # Where this component's zip is about to come from: the folder on the card, the package this
+  # install already unpacked on an earlier run, or the network. Every one of them is checked
+  # against the manifest's sha256 below, so a leftover is never trusted further than its bytes.
+  bl_zip=
   if [ -n "$local_dir" ] && [ -f "$local_dir/$file" ] && bl_intact "$local_dir/$file" "$sum"; then
     echo "== STEP $(date -u +%H:%M:%S) unpacking Steam from the local copy: $block ($i/$total)"
     cp -f "$local_dir/$file" "$work/$file"
+    bl_zip=$work/$file
+  elif [ "$bl_installed" = 1 ] && [ -f "$steam_root/package/$file" ] && bl_intact "$steam_root/package/$file" "$sum"; then
+    # Valve renames a component whenever it replaces one, so an unchanged component still has the
+    # name this device unpacked last time: a sync costs the components that actually changed and
+    # nothing else, instead of 344 MB for one of them. No "(i/total)" here on purpose - the app
+    # reads that shape as a download's counter.
+    echo "== STEP $(date -u +%H:%M:%S) $block is already on the device, $i of $total"
+    bl_zip=$steam_root/package/$file
   elif [ -n "$local_only" ]; then
     echo "droiddeck-steam-install: $block ($file) is not in $local_dir and the device is offline" >&2
     exit 1
   else
-    echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $block ($i/$total, $(bl_size "$size"))"
+    # bl_fetch writes the "downloading" line itself: only it knows which edge it picked, and the
+    # line names it (see bl_fetch). These two are what it needs to write the count and the size too.
+    bl_block=$block
+    bl_step="$i/$total, $(bl_size "$size")"
     bl_fetch "$file" "$work/$file"
+    bl_zip=$work/$file
   fi
   # Checksummed wherever it came from: the manifest names the sha256 of every component, and a
   # local copy is exactly as likely to be truncated or to be the wrong build's file as a download.
-  echo "$sum  $work/$file" | sha256sum -c --quiet
+  echo "$sum  $bl_zip" | sha256sum -c --quiet
   case $size in ''|*[!0-9]*) ;; *) bl_have=$((bl_have + size)) ;; esac
   # Kept in package/ rather than deleted. The client's own updater looks for exactly this name
   # there - the sha1 in it is the file's own - before it downloads anything, and the packages in
@@ -273,10 +523,12 @@ while read -r block file size sum; do
   # own bookkeeping (package/steam_client_*.installed) and starts, where without them it fetches
   # the whole 344 MB again over the link the folder exists to avoid. Valve replacing a component
   # changes its name, so an update costs the components that changed and reuses the rest.
-  mv -f "$work/$file" "$steam_root/package/$file"
-  unzip -qo "$steam_root/package/$file" -d "$steam_root"
+  if [ "$bl_zip" = "$work/$file" ]; then
+    mv -f "$work/$file" "$steam_root/package/$file"
+    bl_zip=$steam_root/package/$file
+  fi
+  unzip -qo "$bl_zip" -d "$steam_root"
 done < "$work/parts"
-# Some entries are zipped with Windows separators; unzip keeps the backslash in the file name.
 find "$steam_root" -depth -name '*\\*' | while read -r odd; do
   fixed=${odd//\\//}
   mkdir -p "$(dirname "$fixed")"
@@ -286,20 +538,20 @@ find "$steam_root" -depth -name '*\\*' | while read -r odd; do
     mv -f "$odd" "$fixed"
   fi
 done
-echo "$steam_channel" > "$steam_root/package/beta"
+chmod -R a+x "$steam_root/steamrtarm64" "$steam_root/linuxarm64" 2>/dev/null || true
+if [ -n "$sync" ]; then
+  cp -f "$work/manifest" "$steam_root/package/$manifest.manifest"
+else
+  echo "$steam_channel" > "$steam_root/package/beta"
+fi
 ln -sfn "$steam_root/steamrtarm64" "$steam_root/steamrtarm32"
 chmod +x "$steam_root/steamrtarm64/steam" 2>/dev/null || true
-# What Valve's steam.sh sets up before it runs the client (it has no arm64 branch itself).
 mkdir -p "$HOME/.steam"
 ln -sfn "$steam_root" "$HOME/.steam/root"
 ln -sfn "$steam_root" "$HOME/.steam/steam"
 ln -sfn "$steam_root/steamrtarm64" "$HOME/.steam/bin64"
-ln -sfn "$steam_root/linuxarm64" "$HOME/.steam/sdk64"
-# The arm64 client runs every game through $HOME/.steam/sdkarm64/steam-launch-wrapper. Valve's
-# steam.sh has no arm64 branch to create it, and without it a launch dies in /bin/sh before Proton
-# is ever invoked - "No such file or directory", no Proton log, and the only other clue is an
-# unrelated-looking installscript assertion. Same target as sdk64; the client picks the name by
-# architecture.
+# sdk64 is where x86_64 Steamworks looks for steamclient.so; arm64 builds look in sdkarm64.
+ln -sfn "$steam_root/linux64" "$HOME/.steam/sdk64"
 ln -sfn "$steam_root/linuxarm64" "$HOME/.steam/sdkarm64"
 ln -sfn "$steam_root/steamrtarm64" "$HOME/.steam/binarm64"
 ln -sfn "$steam_root/linux32" "$HOME/.steam/sdk32"
