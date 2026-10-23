@@ -18,9 +18,8 @@ import java.util.Properties;
 
 public final class Downloader {
     private static final String TAG = "Downloader";
-    // DroidDeckCOK: 15s, not upstream's 10. A GitHub front end reached from mainland China can take
-    // longer than ten seconds to complete TLS, and this budget buys nothing else - it only decides
-    // how long one candidate gets before the next one is tried.
+    // DroidDeckCOK: GitHub's release CDN often needs more than ten seconds to answer
+    // from mainland China, and a connect timeout is not retried by the mirror fallback.
     private static final int CONNECT_TIMEOUT_MS = 15_000;
     private static final int STALL_TIMEOUT_MS = 15_000;
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
@@ -57,50 +56,12 @@ public final class Downloader {
                                        java.util.function.Consumer<Float> progress) {
         if (expectedSha256 != null && !expectedSha256.matches("(?i)[0-9a-f]{64}"))
             throw new IllegalArgumentException("Expected SHA-256 must be 64 hex characters");
-        return downloadCandidates(url, DownloadSource.INSTANCE.candidates(url), destination, resume, expectedSha256, progress);
+        return downloadCandidates(url, sources(url, expectedSha256), destination, resume, expectedSha256, progress);
     }
 
-    /**
-     * DroidDeckCOK: the same walk over the candidates, but the callback is also told which one the
-     * bytes are coming from. The loading screen names the mirror it is reading from (a slot the
-     * runtime's own download has always had, and which the fork gives every other GitHub fetch), and
-     * this is where that name comes from: the -1 fraction arrives the moment a candidate starts, so
-     * the line is up before the first byte moves.
-     *
-     * <p>Named apart from [downloadFile] rather than overloaded onto it: upstream already has a
-     * two-argument-per-callback shape of its own, and a caller passing `null` for "no progress"
-     * matches either of them, which is an ambiguity that only shows up when somebody writes a test.
-     */
-    public static boolean downloadFileFrom(String url, File destination, boolean resume,
-                                           java.util.function.BiConsumer<String, Float> progress) {
-        return downloadFileFrom(url, destination, resume, null, progress);
-    }
-
-    /** [downloadFileFrom] with each candidate checked against [expectedSha256] before it is kept. */
-    public static boolean downloadFileFrom(String url, File destination, boolean resume, String expectedSha256,
-                                           java.util.function.BiConsumer<String, Float> progress) {
-        List<String> sources = DownloadSource.INSTANCE.candidates(url);
-        for (int i = 0; i < sources.size(); i++) {
-            String source = sources.get(i);
-            final String named = host(source);
-            if (progress != null) progress.accept(named, -1f);
-            java.util.function.Consumer<Float> inner = fraction -> {
-                if (progress != null) progress.accept(named, fraction);
-            };
-            if (downloadCandidates(url, java.util.Collections.singletonList(source), destination, resume,
-                    expectedSha256, inner)) return true;
-        }
-        DownloadSource.INSTANCE.failed();
-        return false;
-    }
-
-    /** The candidate's host, for that progress line: which mirror this download is on. */
-    public static String host(String url) {
-        try {
-            String host = new URL(url).getHost();
-            if (host != null) return host;
-        } catch (Exception e) { /* fall through to the raw URL */ }
-        return url;
+    /** A third-party mirror may only serve bytes that can be checked against a digest from a direct source. */
+    static List<String> sources(String url, String expectedSha256) {
+        return expectedSha256 == null ? java.util.Collections.singletonList(url) : DownloadSource.INSTANCE.candidates(url);
     }
 
     // Package-private for the local multi-source HTTP test.

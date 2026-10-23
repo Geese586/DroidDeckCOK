@@ -27,26 +27,12 @@ object ProtonExtras {
 
     class Tool(val id: String, val name: String, val prefix: String, val repo: String, val assetPattern: Regex)
 
-    /**
-     * [sha256] from GitHub's asset digest; [sha512] the URL of a checksum file published beside it.
-     * [publishedAsset] hands one out so an archive the user picked can be checked by the same
-     * rules a download is.
-     */
     internal data class Asset(val tag: String, val name: String, val url: String, val sha512: String?, val size: Long,
-                              val sha256: String? = null)
+                             val sha256: String? = null)
 
     val tools = listOf(
         Tool("ge", "GE-Proton", "GE-Proton", "GloriousEggroll/proton-ge-custom", Regex("aarch64\\.tar\\.(gz|xz)$")),
         Tool("cachyos", "proton-cachyos", "proton-cachyos", "CachyOS/proton-cachyos", Regex("arm64\\.tar\\.(gz|xz)$")),
-        // DroidDeck's own ARM64 build: GE-Proton with seven tiers of Wine patches on top - Valve
-        // bleeding-edge, GE, CachyOS' game fixes, the Bannerlator portability fixes, DroidDeck's own
-        // esync, the SD card fixes and the media fixes. Released on its own schedule, so a row of its
-        // own. Its tree unpacks to "DroidDeck-Proton <version>", which the prefix still matches.
-        // 0.4.0 had moved the release repo to The412Banner's mirror while the org one was behind;
-        // 0.5.0 moved it back to Droid-Deck/DroidDeck-Proton, and upstream's coordinates are the
-        // ones to follow - the mirror listed the same assets, so nothing is lost by dropping it.
-        // (The two lines this replaced were the fork's and upstream's copy of the same tool, and a
-        // merge that keeps both lists DroidDeck-Proton twice.)
         Tool("droiddeck", "DroidDeck-Proton", "DroidDeck-Proton", "Droid-Deck/DroidDeck-Proton", Regex("aarch64\\.tar\\.(gz|xz)$")),
     )
 
@@ -168,26 +154,6 @@ object ProtonExtras {
         return try { installNow(context, tool, onProgress) } finally { installInProgress = false }
     }
 
-    /**
-     * Installs a build from an archive already on the device, for a network that cannot reach
-     * GitHub at all - the case this path exists for. [asset] is the release the archive was
-     * published as, found by file name so the same checksum can be checked; null when no release
-     * publishes that name, which is when the caller has to ask the user whether to go on.
-     *
-     * [syncPacks] is whether the esync packs the build wants may be looked up afterwards. False
-     * for a caller that must not touch the network at all: the packs the release came with are
-     * already in the runtime, and a session started later fills in the rest on its own (see
-     * [EsyncPacks.fetchInBackground]).
-     */
-    @Synchronized
-    internal fun installFromFile(context: Context, tool: Tool, archive: File, asset: Asset?,
-                                 syncPacks: Boolean = true,
-                                 onProgress: (String, Int) -> Unit): String? {
-        if (installInProgress) return "A compatibility tool install is already running"
-        installInProgress = true
-        return try { installArchive(context, tool, archive, asset, false, syncPacks, onProgress) } finally { installInProgress = false }
-    }
-
     private fun installNow(context: Context, tool: Tool, onProgress: (String, Int) -> Unit): String? {
         if (SessionState.running) return context.getString(R.string.pextra_stop_session)
         if (!LinuxRuntime.isInstalled(context)) return context.getString(R.string.user_apps_runtime_required)
@@ -205,9 +171,8 @@ object ProtonExtras {
         onProgress(downloading, 0)
         var downloaded = false
         for (attempt in 0 until 5) {
-            downloaded = Downloader.downloadFileFrom(asset.url, archive, true, asset.sha256) { source, fraction ->
-                val stage = if (source.isEmpty()) downloading else downloading + " · " + source
-                onProgress(stage, if (fraction < 0) -1 else (fraction * 100f).toInt().coerceIn(0, 100))
+            downloaded = Downloader.downloadFile(asset.url, archive, true, asset.sha256) { fraction ->
+                onProgress(downloading, if (fraction < 0) -1 else (fraction * 100f).toInt().coerceIn(0, 100))
             }
             if (downloaded) break
             if (attempt < 4) {
@@ -226,8 +191,27 @@ object ProtonExtras {
             }
             return context.getString(R.string.pextra_incomplete)
         }
-
         return installArchive(context, tool, archive, asset, true, true, onProgress)
+    }
+
+    /**
+     * Installs a build from an archive already on the device, for a network that cannot reach
+     * GitHub at all - the case this path exists for. [asset] is the release the archive was
+     * published as, found by file name so the same checksum can be checked; null when no release
+     * publishes that name, which is when the caller has to ask the user whether to go on.
+     *
+     * [syncPacks] is whether the esync packs the build wants may be looked up afterwards. False
+     * for a caller that must not touch the network at all: the packs the release came with are
+     * already in the runtime, and a session started later fills in the rest on its own (see
+     * [EsyncPacks.fetchInBackground]). (DroidDeckCOK)
+     */
+    @Synchronized
+    internal fun installFromFile(context: Context, tool: Tool, archive: File, asset: Asset?,
+                                 syncPacks: Boolean = true,
+                                 onProgress: (String, Int) -> Unit): String? {
+        if (installInProgress) return "A compatibility tool install is already running"
+        installInProgress = true
+        return try { installArchive(context, tool, archive, asset, false, syncPacks, onProgress) } finally { installInProgress = false }
     }
 
     /**
@@ -255,7 +239,8 @@ object ProtonExtras {
             onProgress(context.getString(R.string.pextra_verifying), -1)
             if (asset.sha256 == null && asset.sha512 == null) {
                 if (own) archive.delete()
-                return "${tool.name} ${asset.tag} publishes no checksum; nothing was installed"
+                return if (own) context.getString(R.string.pextra_no_checksum, tool.name, asset.tag)
+                else "${tool.name} ${asset.tag} publishes no checksum; nothing was installed"
             }
             val verified = if (asset.sha256 != null) {
                 asset.sha256.equals(Hashes.sha256(archive), ignoreCase = true)
@@ -266,7 +251,7 @@ object ProtonExtras {
             }
             if (!verified) {
                 if (own) archive.delete()
-                return if (own) "Checksum mismatch; the download was deleted"
+                return if (own) context.getString(R.string.pextra_checksum_mismatch)
                 else "Checksum mismatch; nothing was installed and the file was left alone"
             }
         }
@@ -297,7 +282,7 @@ object ProtonExtras {
                 .redirectErrorStream(true)
             val hostEnv = process.environment()
             hostEnv["PROOT_LOADER"] = LinuxRuntime.prootLoader(context).path
-            hostEnv["PROOT_TMP_DIR"] = context.cacheDir.path
+            hostEnv["PROOT_TMP_DIR"] = LinuxRuntime.prootTempDir(context).path
             // The same switch the session honours; see SessionPrefs.prootNoSeccomp. Without it a
             // kernel that mishandles proot's seccomp filter leaves this child - and the install -
             // waiting for ever, which is what a run that never gets past this step looks like.
@@ -347,6 +332,7 @@ object ProtonExtras {
     /**
      * The release record for an asset named [name], so an archive the user picked can be checked
      * the way the download of it would be; null when no release of [tool] publishes that name.
+     * (DroidDeckCOK)
      */
     internal fun publishedAsset(tool: Tool, name: String): Asset? = findAsset(tool) { it == name }
 
@@ -365,7 +351,8 @@ object ProtonExtras {
     /** The newest full release in GitHub's list (newest first) that carries [tool]'s ARM64 archive.
      *  [matches] picks the asset out of a release carrying more than one - the tool's own pattern by
      *  default, else one exact name (an archive the user picked; see publishedAsset). */
-    internal fun pickAsset(tool: Tool, array: JSONArray, matches: (String) -> Boolean = { tool.assetPattern.containsMatchIn(it) }): Asset? {
+    internal fun pickAsset(tool: Tool, array: JSONArray,
+                           matches: (String) -> Boolean = { tool.assetPattern.containsMatchIn(it) }): Asset? {
         for (i in 0 until array.length()) {
             val release = array.getJSONObject(i)
             if (release.optBoolean("draft", false) || release.optBoolean("prerelease", false)) continue

@@ -22,6 +22,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -119,7 +121,7 @@ internal fun SideRail(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().selectableGroup(),
         ) {
             val place: (String) -> Modifier = { key ->
                 Modifier.onGloballyPositioned {
@@ -134,10 +136,9 @@ internal fun SideRail(
             RailItem(stringResource(R.string.rail_components), Icons.Outlined.Layers, "components", shown == "components", compact, iconOnly, fit, place = place, onFocus = { onFocusSelect("components") }) { onSelect("components") }
             if (s.isHomeApp) RailItem(stringResource(R.string.rail_apps), Icons.Outlined.Apps, "android-apps", shown == "android-apps", compact, iconOnly, fit, place = place, onFocus = { onFocusSelect("android-apps") }) { onSelect("android-apps") }
             RailItem(stringResource(R.string.rail_setup), Icons.Outlined.Tune, "setup", shown == "setup", compact, iconOnly, fit, badge = setupNeedsAttention, place = place, onFocus = { onFocusSelect("setup") }) { onSelect("setup") }
-            // Either reason the Updates section wants attention: an official build this copy could
-            // install over itself (upstream's reading, never true here - the signer differs), or
-            // DroidDeck's sources having moved past the version this fork was built on, which is
-            // the one that applies to this checkout (UpdatesForkPage).
+            // DroidDeckCOK: this build cannot install upstream's package, so the dot also lights up
+            // when the catalog merely holds a newer official release - the update page explains how
+            // to get it by hand. Without this, a self-signed build never shows the badge.
             RailItem(stringResource(R.string.rail_updates), Icons.Outlined.SystemUpdate, "updates", shown == "updates", compact, iconOnly, fit, badge = s.updates.hasUpdate || officialUpdateAvailable(s.updates.catalog) != null, place = place, onFocus = { onFocusSelect("updates") }) { onSelect("updates") }
         }
         }
@@ -196,7 +197,7 @@ private fun RailItem(
             .background(fill)
             .glideBorder(focused, Shape14, pal.signal)
             .hoverable(src)
-            .clickable(interactionSource = src, indication = LocalIndication.current, role = Role.Tab, onClick = onClick)
+            .selectable(selected = current, interactionSource = src, indication = LocalIndication.current, role = Role.Tab, onClick = onClick)
             .then(if (iconOnly) Modifier.semantics { contentDescription = label } else Modifier),
     ) {
         if (iconOnly) Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(22.dp))

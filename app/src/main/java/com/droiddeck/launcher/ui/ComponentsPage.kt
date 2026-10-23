@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -73,6 +74,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -151,6 +154,7 @@ fun ComponentsPage(
     onImport: () -> Unit,
     onBack: () -> Unit,
     games: List<Library.SteamGame> = emptyList(),
+    initialGameKey: String? = null,
     generalFexPreset: String = "",
     onGeneralFexPreset: (String) -> Unit = {},
     requestInitialFocus: Boolean = true,
@@ -169,7 +173,7 @@ fun ComponentsPage(
     val layer = if (comp in LAYERS) comp else GPU_TAB
     BackHandler(onBack = onBack)
     var scopeMenu by remember { mutableStateOf(false) }
-    var selectedGameKey by remember { mutableStateOf<String?>(null) }
+    var selectedGameKey by remember(initialGameKey) { mutableStateOf(initialGameKey) }
     var fexMenu by remember { mutableStateOf(false) }
     var gameProtonMenu by remember { mutableStateOf(false) }
     var gameProtonId by remember { mutableStateOf<String?>(null) }
@@ -380,6 +384,7 @@ fun ComponentsPage(
     var stackAt by remember { mutableStateOf(Offset.Zero) }
     var pageAt by remember { mutableStateOf(Offset.Zero) }
     val landed = remember { mutableStateMapOf<String, Int>() }
+    val nightlyPicked = remember { mutableStateMapOf<String, Boolean>() }
     val rings = remember { mutableStateMapOf<String, Int>() }
     fun land(l: String) { landed[l] = (landed[l] ?: 0) + 1; rings[l] = (rings[l] ?: 0) + 1 }
     val arrivedSeen = remember { intArrayOf(Hops.arrived) }
@@ -503,7 +508,7 @@ fun ComponentsPage(
     val availableTitle: @Composable (String) -> String = { l ->
         when (l) {
             PROTON_TAB -> stringResource(R.string.comp_available_count, protons.rows.count { it.installed == null || it.update != null })
-            else -> stringResource(R.string.comp_nightlies_count, availableFor(l, catalog, snapshot).size)
+            else -> stringResource(R.string.comp_nightlies_count, availableRows(l, catalog, snapshot).size)
         }
     }
     val installedRows: @Composable ColumnScope.(String, Boolean) -> Unit = { l, right ->
@@ -577,52 +582,25 @@ fun ComponentsPage(
                     enabled = protons.busyId == null && protons.runtimeReady && !protons.sessionRunning,
                     onCancel = if (row.queued && protons.busyId == null && !protons.sessionRunning) ({ protonActions.onCancel(row.id) }) else null,
                     action = if (row.update != null) stringResource(R.string.common_update) else null,
-                    secondAction = if (protons.busyId == null) stringResource(R.string.proton_from_file) else null,
-                    onSecond = { protonActions.onInstallFromFile(row.id) },
                 ) { protonActions.onInstall(row.id) }
             }
             else -> {
-                val available = availableFor(l, catalog, snapshot)
+                val available = availableRows(l, catalog, snapshot)
                 if (available.isEmpty()) EmptyLine(if (catalogAt == 0L) stringResource(R.string.comp_refresh_to_list) else stringResource(R.string.comp_nothing_new))
-                for (d in available) GetLine(
-                    d.file.removeSuffix(".wcp"), "${d.release} · " + stringResource(R.string.common_size_mb, d.size / 1048576.0),
-                    progress = downloads[d.file], enabled = busy == null,
-                ) { onDownload(d) }
+                for ((stable, nightly) in available) {
+                    val d = if (nightly != null && nightlyPicked[stable.file] == true) nightly else stable
+                    GetLine(
+                        d.file.removeSuffix(".wcp"), "${d.release} · " + stringResource(R.string.common_size_mb, d.size / 1048576.0),
+                        progress = downloads[d.file], enabled = busy == null,
+                        channel = if (nightly != null) ({ ChannelToggle(d === nightly, enabled = busy == null) { nightlyPicked[stable.file] = d !== nightly } }) else null,
+                    ) { onDownload(d) }
+                }
             }
         }
     }
     val actions: @Composable (String) -> Unit = { l ->
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
             when (l) {
-                GPU_TAB -> {
-                    SmallButton(stringResource(R.string.comp_import_zip), enabled = gpu.exporting == null, onClick = gpuActions.onImportZip)
-                    // Import is one driver at a time; export is every installed driver at once, into a
-                    // folder of the user's choosing - the way out of the app-private driver folders.
-                    SecondaryButton(
-                        stringResource(R.string.driversexport_do), compact = true,
-                        enabled = gpu.busy == null && gpu.exporting == null, progress = gpu.exporting,
-                        onClick = gpuActions.onExportDrivers,
-                    )
-                    var at by remember { mutableStateOf<Rect?>(null) }
-                    Box(Modifier.onGloballyPositioned { at = it.boundsInRoot() }) {
-                        FocusText(stringResource(R.string.gpu_separately) + " ›", pal.signal) {
-                            val from = at
-                            val title = ctx.getString(R.string.gpu_separately)
-                            if (from == null) { driverPage = "rt"; return@FocusText }
-                            Steps.ask(StepAsk(anchor = from, side = StepSide.Right, accent = pal.signal, pillCorner = 10.dp, items = 3, handle = {}) {
-                                StepTitle(title)
-                                StepList {
-                                    StepChoice(ctx.getString(R.string.comp_runtime_driver), enabled = open, modifier = Modifier.fillMaxWidth().stepItem(1).focusRequester(first)) {
-                                        Steps.fold(); driverFrom = Origin(from.translate(-pageAt), 10f * density.density); driverPage = "rt"
-                                    }
-                                    StepChoice(ctx.getString(R.string.comp_display_driver), enabled = open, modifier = Modifier.fillMaxWidth().stepItem(2)) {
-                                        Steps.fold(); driverFrom = Origin(from.translate(-pageAt), 10f * density.density); driverPage = "panel"
-                                    }
-                                }
-                            })
-                        }
-                    }
-                }
                 PROTON_TAB -> {
                     val idle = protons.busyId == null && protons.runtimeReady && !protons.sessionRunning
                     for (row in protons.rows.filter { it.installedAll.size > 1 }) {
@@ -950,6 +928,14 @@ private fun installedFor(l: String, view: ComponentsManager.ProtonView?, snapsho
 private fun availableFor(l: String, catalog: List<CatalogItem>, snapshot: Snapshot?): List<CatalogItem> {
     val stored = (snapshot?.packages ?: emptyList()).map { it.file }.toSet()
     return catalog.filter { it.comp == l && ComponentsManager.safeName(it.file) !in stored }
+}
+
+// The rows to show: each stable row carries its paired nightly (if any), and a paired nightly has no row of its own.
+private fun availableRows(l: String, catalog: List<CatalogItem>, snapshot: Snapshot?): List<Pair<CatalogItem, CatalogItem?>> {
+    val available = availableFor(l, catalog, snapshot)
+    val pairs = ComponentsManager.nightlyPairs(available)
+    val paired = pairs.values.toSet()
+    return available.filter { it !in paired }.map { it to pairs[it] }
 }
 
 @Composable
@@ -1337,7 +1323,7 @@ internal fun ToolIcon(icon: ImageVector, description: String, busy: Boolean = fa
         modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
             .background(if (hot) pal.signal.copy(alpha = 0.16f) else Color.Transparent)
             .glideBorder(hot, RoundedCornerShape(12.dp), pal.signal, pal.line2)
-            .hoverable(src).clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .hoverable(src).clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
             .controllerConfirm(enabled = enabled, onClick = onClick),
     ) {
         if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
@@ -1356,7 +1342,7 @@ private fun SmallButton(text: String, enabled: Boolean = true, accent: Boolean =
         modifier = modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
             .background(if (hot) pal.signal else colors.surfaceVariant)
             .glideBorder(hot, RoundedCornerShape(10.dp), colors.onBackground, pal.line2, restWidth = 2.dp)
-            .hoverable(src).clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
+            .hoverable(src).clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
             .controllerConfirm(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
@@ -1436,7 +1422,7 @@ private fun ChoiceLine(
                 modifier = Modifier.padding(end = 6.dp).size(44.dp).clip(ROW_SHAPE)
                     .background(if (delHot) colors.error.copy(alpha = 0.14f) else Color.Transparent)
                     .glideBorder(delHot, ROW_SHAPE, colors.error)
-                    .hoverable(delSrc).clickable(interactionSource = delSrc, indication = null, onClick = onDelete)
+                    .hoverable(delSrc).clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = delSrc, indication = null, onClick = onDelete)
                     .controllerConfirm(onClick = onDelete),
             ) { Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete_named, name), tint = if (delHot) colors.error else colors.onSurfaceVariant, modifier = Modifier.size(19.dp)) }
         }
@@ -1448,9 +1434,7 @@ private fun ChoiceLine(
 private fun GetLine(
     name: String, detail: String, progress: Int?, enabled: Boolean,
     badge: String? = null, stage: String? = null, onCancel: (() -> Unit)? = null, action: String? = null,
-    /** A second, quieter way in, shown left of Get: the fork reads an archive off the device. */
-    secondAction: String? = null, onSecond: (() -> Unit)? = null,
-    onGet: () -> Unit,
+    channel: (@Composable () -> Unit)? = null, onGet: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
@@ -1465,16 +1449,41 @@ private fun GetLine(
         if (progress != null) ProgressBit(progress)
         else {
             if (onCancel != null) FocusText(stringResource(R.string.proton_cancel_queued), pal.signal, onClick = onCancel)
-            if (secondAction != null && onSecond != null) {
-                // The bytes can be carried over from a computer on a network that cannot reach
-                // GitHub itself; the client only needs the tree in place.
-                SecondaryButton(secondAction, enabled = enabled, compact = true, onClick = onSecond)
-                Spacer(Modifier.width(8.dp))
-            }
+            channel?.invoke()
             SmallButton(action ?: stringResource(R.string.comp_get), enabled = enabled, accent = true, onClick = onGet)
         }
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+}
+
+// Stable | Nightly in the same box as SmallButton: one focus stop, A (or a tap) flips it.
+@Composable
+private fun ChannelToggle(nightly: Boolean, enabled: Boolean, onFlip: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val src = remember { MutableInteractionSource() }
+    val hot = rememberHot(src) && enabled
+    val state = stringResource(if (nightly) R.string.comp_channel_nightly else R.string.comp_channel_stable)
+    Row(
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
+            .background(colors.surfaceVariant)
+            .glideBorder(hot, RoundedCornerShape(10.dp), colors.onBackground, pal.line2, restWidth = 2.dp)
+            .hoverable(src).toggleable(value = nightly, interactionSource = src, indication = null, enabled = enabled, role = Role.Switch, onValueChange = { onFlip() })
+            .controllerConfirm(enabled = enabled, onClick = onFlip)
+            .semantics { stateDescription = state }
+            .padding(4.dp),
+    ) {
+        for ((label, on) in listOf(R.string.comp_channel_stable to !nightly, R.string.comp_channel_nightly to nightly)) {
+            Text(
+                stringResource(label), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                color = if (!enabled) colors.onSurfaceVariant else if (on) (if (hot) pal.onSignal else pal.signal) else colors.onSurfaceVariant,
+                modifier = Modifier.clip(RoundedCornerShape(7.dp))
+                    .background(if (on && enabled) (if (hot) pal.signal else pal.signal.copy(alpha = 0.16f)) else Color.Transparent)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -1556,9 +1565,6 @@ class ProtonsState(
 class ProtonsActions(
     val onInstall: (String) -> Unit = {},
     val onCancel: (String) -> Unit = {},
-    /** Installs a build from an archive the user picked: the source's id, fetched from the device. */
-    val onInstallFromFile: (String) -> Unit = {},
-    /** The source's id and the installed folder to delete. */
     val onRemove: (String, String) -> Unit = { _, _ -> },
     val onRemoveOlder: (String) -> Unit = {},
 )

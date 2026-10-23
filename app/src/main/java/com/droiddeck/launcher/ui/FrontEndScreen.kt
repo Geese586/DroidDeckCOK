@@ -132,12 +132,13 @@ class FrontEndState(
     val controller: com.droiddeck.launcher.input.ControllerPrefs.Settings? = null,
     val phantomProcessStatus: PhantomProcessStatus = PhantomProcessStatus.NOT_APPLICABLE,
     val showPhantomGate: Boolean = false,
-    val orientation: Int = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
+    val orientation: Int = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
     val launcherFullscreen: Boolean = true,
     val downloadSource: String = DownloadSource.MODE_AUTO,
     val downloadMirror: String = "",
     val downloadPrefix: String = "",
     val animationsEnabled: Boolean = true,
+    val launcherIcon: String = com.droiddeck.launcher.LauncherIcon.DARK,
     val gameStoresEnabled: Boolean = true,
     val gameStoresSpeedTier: String = "fast",
     val storesOpenTab: String = SessionPrefs.STORES_OPEN_LIBRARY,
@@ -149,29 +150,16 @@ class FrontEndState(
     val storesView: String = SessionPrefs.STORES_VIEWS.first(),
     val storeDownloadsActive: Int = 0,
     val updates: UpdatesState = UpdatesState(),
-    /** Setup › Launcher: which of Valve's two client-update edges a Steam client install pins (SteamCdn ids). */
-    val steamCdn: String = com.droiddeck.launcher.session.SteamCdn.AUTO,
-    /** Setup › Diagnostics: the Steam line test - busy while it runs, the edges once it is done. */
-    val steamLineTestBusy: Boolean = false,
-    val steamLineTestEdges: List<com.droiddeck.launcher.session.SteamCdnProbe.Edge>? = null,
     /**
      * Whether a first-time install from a folder still has something to put in - the runtime,
      * Valve's Proton or the Steam client. The play page's button is shown exactly while it is true.
+     * (DroidDeckCOK)
      */
     val firstLocalInstallNeeded: Boolean = false,
 )
 
 class FrontEndActions(
     val onPlay: () -> Unit,
-    /**
-     * Play, but with the Steam edge menu on the loading screen instead of the plain run.
-     *
-     * The plain Play does not: it goes straight in, and the user who needs the menu is the one whose
-     * line is the thing in doubt. Nothing is timed before the session starts - a measurement that
-     * answers "neither edge" on a whole class of devices delayed every one of those starts and told
-     * the user nothing they could act on.
-     */
-    val onPlayMeasured: () -> Unit = {},
     val onPlaySteamVr: () -> Unit = {},
     val onPlayDesktopUi: () -> Unit,
     val onSteamUrl: (String) -> Unit = {},
@@ -183,6 +171,7 @@ class FrontEndActions(
     val onAddedGamesChanged: (folders: List<String>) -> Unit = {},
     val onSteamGameArtChanged: (appId: Int) -> Unit = {},
     val onAddedGameRemoved: (folder: String, appId: Long?, name: String) -> Unit = { _, _, _ -> },
+    val onGameRemoved: (Library.SteamGame) -> Unit = {},
     val onAddedGamesArt: (Boolean) -> Unit = {},
     val onSgdbKey: (String) -> Unit = {},
     val onStopGameFileSync: () -> Unit = {},
@@ -206,23 +195,17 @@ class FrontEndActions(
     val onImportLossless: () -> Unit,
     val onProtons: () -> Unit,
     val onComponents: (focusContent: Boolean) -> Unit,
+    val onGameComponents: (Library.SteamGame) -> Unit = { onComponents(true) },
     val onComponentsTab: (String) -> Unit = {},
     val onSaveImport: (Library.SteamGame) -> Unit = {},
     val onSaveExport: (Library.SteamGame, com.droiddeck.launcher.session.GameSaves.Layout) -> Unit = { _, _ -> },
     val onPerformance: () -> Unit,
     val onRoms: () -> Unit,
     val onFiles: () -> Unit,
-    /** The Desktop page's Files tab: pack the desktop's language files into a folder the user picks. */
-    val onExportDesktopLang: () -> Unit = {},
-    /** The Desktop page's Files tab: put the desktop itself on Traditional Chinese, once more. */
-    val onSetDesktopLanguage: () -> Unit = {},
     val onBrowseFiles: (File) -> Unit = {},
     val onLogs: () -> Unit,
     val onVacDiagnostics: () -> Unit = {},
     val onAgentCommands: () -> Unit = {},
-    /** Setup's Diagnostics: the one-click install's log, saved on its own - the report is only
-     *  shown when a run went wrong, and a run the system killed never got to show one at all. */
-    val onExportInstallLog: () -> Unit = {},
     val onShareLogs: () -> Unit = {},
     val onClearLogs: () -> Unit = {},
     val onResetSettings: () -> Unit = {},
@@ -231,6 +214,7 @@ class FrontEndActions(
     val onTheme: (String) -> Unit = {},
     val onLanguage: (String) -> Unit = {},
     val onAppScale: (Int) -> Unit = {},
+    val onLauncherIcon: (String) -> Unit = {},
     val onOrientation: (Int) -> Unit = {},
     val onLauncherFullscreen: (Boolean) -> Unit = {},
     val onAnimationsEnabled: (Boolean) -> Unit = {},
@@ -240,17 +224,9 @@ class FrontEndActions(
     val onGameStoresEnabled: (Boolean) -> Unit = {},
     /**
      * The first-time install, all of it at once: pick the folder the releases were saved into and
-     * everything missing from it goes in one after another.
+     * everything missing from it goes in one after another. (DroidDeckCOK)
      */
     val onFirstLocalInstall: () -> Unit = {},
-    /** Install the runtime from an archive already on the device, for a network that cannot fetch it. */
-    val onInstallRuntimeFromFile: () -> Unit = {},
-    /** SteamCdn.AUTO / FASTLY / AKAMAI: which of Valve's client-update edges installs pin. */
-    val onSteamCdn: (String) -> Unit = {},
-    /** Setup › Diagnostics: time both of Valve's client-update edges from this network. */
-    val onSteamLineTest: () -> Unit = {},
-    /** The line test's dialog was closed: the result goes with it. */
-    val onSteamLineTestDismiss: () -> Unit = {},
     val onGameStoresSpeedTier: (String) -> Unit = {},
     val onStoresOpenTab: (String) -> Unit = {},
     val onNavigated: () -> Unit = {},
@@ -425,6 +401,7 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
         when (target) {
             "stores:downloads" -> { com.droiddeck.launcher.stores.StoresState.openDownloads = true; selected = "stores" }
             "components" -> a.onComponents(true)
+            "setup:launcher" -> { SetupTabs.openLauncher = true; selected = "setup" }
             else -> selected = target
         }
         a.onNavigated()

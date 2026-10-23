@@ -12,8 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import com.droiddeck.launcher.gpu.AutoDriverTrial
+import com.droiddeck.launcher.gpu.AutoPicks
 import com.droiddeck.launcher.gpu.DriverBundle
-import com.droiddeck.launcher.gpu.DriverExport
 import com.droiddeck.launcher.gpu.DriverPairs
 import com.droiddeck.launcher.gpu.GpuInfo
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
@@ -49,9 +49,6 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
     var pairPercent by mutableIntStateOf(-1)
     var autoStatus by mutableStateOf("")
     var activeBundle by mutableStateOf<String?>(null)
-    /** 0..1 while every installed driver is being copied out, null when no export is running. */
-    var exporting by mutableStateOf<Float?>(null)
-    private var autoCheckedThisProcess = false
     private var lastAutoCheck = 0L
     private var pairModeOpen by mutableStateOf(false)
     var restartPending by mutableStateOf(false)
@@ -72,7 +69,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         autoStatus = autoStatus, releaseStatus = releaseStatus.ifEmpty { activity.getString(R.string.drivers_not_checked) }, checking = releaseChecking,
         linuxRows = linuxRows, linuxSelected = linuxSelected, androidRows = androidRows, androidSelected = androidSelected,
         linuxDownloads = linuxDownloads, androidDownloads = androidDownloads, canRestoreBundled = canRestoreBundled,
-        activeBundle = activeBundle, exporting = exporting,
+        activeBundle = activeBundle,
         mode = uiMode, display = displaySlot(), runtime = runtimeSlot(),
         canRestart = !sessionRunning,
         checkedAt = TurnipReleases.cached(activity)?.checkedAt ?: 0L,
@@ -183,7 +180,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         val lm = LinuxVulkanDriverManager(activity)
         val td = TurnipDriver(activity)
         val pairs = DriverPairs.from(TurnipReleases.cached(activity))
-        val recommended = if (QuestExperimental.isSupported()) null else DriverPairs.recommendedKey(gpu, pairs)
+        val recommended = if (QuestExperimental.isSupported()) null else recommendedKey(pairs)
         pairRows = pairs.map { p ->
             val bundle = p.bundle?.let { installedBundle(it) }
             val displayId = if (p.bundle != null) bundle?.androidId else p.display?.let { TurnipReleases.installedId(activity, it, td::isInstalled) }
@@ -199,6 +196,11 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
             )
         }.sortedByDescending { it.recommended }
     }
+
+    private fun recommendedKey(pairs: List<DriverPairs.DriverPair>) = DriverPairs.recommendedKey(
+        gpu, pairs, TurnipReleases.autoPicks(activity), AutoDriverTrial.bad(activity),
+        blob = AutoPicks.blobVersion(com.droiddeck.launcher.gpu.VulkanInfo.cachedOrNull()?.get("driver_version")),
+    )
 
     fun chooseMode(next: String) {
         pairModeOpen = next == GPU_MODE_PAIR
@@ -259,12 +261,13 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         Thread({
             val problem = if (force || releasesStale()) runCatching { TurnipReleases.refresh(activity) }.exceptionOrNull()?.message else null
             val holdBack = !force && com.droiddeck.launcher.frontend.AutoComponents.constrained(activity)
+            runCatching { com.droiddeck.launcher.gpu.VulkanInfo.query() }
             ui.post {
                 releaseChecking = false
                 refreshReleaseRows()
                 refreshPairs()
                 val pairs = DriverPairs.from(TurnipReleases.cached(activity))
-                val key = DriverPairs.recommendedKey(gpu, pairs)
+                val key = recommendedKey(pairs)
                 val pair = pairs.firstOrNull { it.key == key }
                 val row = pairRows.firstOrNull { it.key == key }
                 when {
@@ -435,40 +438,6 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         )
     }
 
-    /**
-     * Copy every installed driver into [folder], as zips this tab's own Import .zip takes back, plus
-     * a drivers.txt saying what each one is. Off the main thread - the display drivers are tens of
-     * MB together - with the buttons showing the percent; the last line is a toast.
-     */
-    fun exportTo(folder: File) {
-        if (exporting != null) return
-        exporting = 0f
-        Thread({
-            val result = runCatching {
-                DriverExport.export(activity, folder) { percent -> ui.post { exporting = percent / 100f } }
-            }
-            ui.post {
-                exporting = null
-                result.onSuccess { done ->
-                    val text = if (done.drivers > 0) activity.getString(R.string.driversexport_done, done.drivers, folder.name)
-                        else activity.getString(R.string.driversexport_none)
-                    android.widget.Toast.makeText(activity, text, android.widget.Toast.LENGTH_LONG).show()
-                }.onFailure { e ->
-                    Log.w(TAG, "driver export", e)
-                    android.widget.Toast.makeText(
-                        activity, activity.getString(R.string.driversexport_failed, e.message ?: e.javaClass.simpleName),
-                        android.widget.Toast.LENGTH_LONG,
-                    ).show()
-                }
-            }
-        }, "driver-export").start()
-    }
-
-    /**
-     * Delete an imported or downloaded driver. A mode still set to it goes back to its default, so a
-     * session never starts on a driver that is gone; a release download is forgotten, so the menu
-     * offers it again.
-     */
     fun deleteDriver(id: String, linux: Boolean) {
         val bundle = DriverBundle.containing(activity, id, linux)
         if (bundle != null) {

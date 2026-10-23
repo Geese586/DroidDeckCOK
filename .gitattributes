@@ -1,12 +1,5 @@
-# Auto detect text files and perform LF normalization
-* text=auto
-
 tools/linuxfs/** text=auto eol=lf
 tools/mangoapp/** text=auto eol=lf
-# 0.5.0's VR sources: the C/C++ under tools/vr is compiled on a Linux container and diffed against
-# upstream at every merge, so a Windows checkout must not hand make-archive.py a CRLF copy of it -
-# that is what turns one changed line into a whole-file patch. (DroidDeckCOK)
-tools/vr/** text=auto eol=lf
 tools/comet/LICENSE whitespace=-blank-at-eof
 tools/comet/droiddeck.patch whitespace=-blank-at-eol,-blank-at-eof
 

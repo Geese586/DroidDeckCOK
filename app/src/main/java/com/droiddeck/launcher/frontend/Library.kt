@@ -16,9 +16,10 @@ object Library {
         val icon: File? = null,
         val source: String = SOURCE_STEAM,
         val storeId: String? = null,
+        val logo: File? = null,
     ) {
-        fun withArt(art: File?, hero: File?, icon: File?) =
-            SteamGame(appId, name, art, library, gameId, hero, lastPlayed, gameFiles, protonPrefix, icon, source, storeId)
+        fun withArt(art: File?, hero: File?, icon: File?, logo: File? = this.logo) =
+            SteamGame(appId, name, art, library, gameId, hero, lastPlayed, gameFiles, protonPrefix, icon, source, storeId, logo)
 
         val gameIdString: String get() = java.lang.Long.toUnsignedString(gameId)
         val profileKey: String get() = if (library == ADDED) java.lang.Integer.toUnsignedString(appId) else appId.toString()
@@ -68,10 +69,12 @@ object Library {
     )
     private val STEAM_CAPSULES = listOf("library_capsule.jpg", "library_600x900.jpg")
     private val STEAM_HEROES = listOf("library_hero.jpg")
+    internal val STEAM_LOGOS = listOf("logo.png")
     private val STEAM_ICON = Regex("[a-fA-F0-9]{40}\\.(jpg|png)")
     private val NAME = Regex("^\\s*\"name\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
     private val STATE = Regex("^\\s*\"StateFlags\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
     private val LAST_PLAYED = Regex("^\\s*\"LastPlayed\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
+    private val PRIVATE_APPS = Regex("\"PrivateApps_\\d+\"\\s*\"\\[([^\\]]*)\\]\"")
     private val INSTALL_DIR = Regex("^\\s*\"installdir\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
 
     internal fun steamLibraries(context: Context, arch: String = SessionPrefs.activeSteamClientArch(context)): List<Pair<File, String>> {
@@ -130,6 +133,7 @@ object Library {
                         protonPrefix = protonPrefix(context, appId.toLong(), library, roots),
                         icon = steamCacheImage(cache, appId, listOf("icon.jpg", "icon.png"))
                             ?: File(cache, appId.toString()).listFiles()?.firstOrNull { it.isFile && STEAM_ICON.matches(it.name) },
+                        logo = steamCacheImage(cache, appId, STEAM_LOGOS),
                     ))
                 }
         }
@@ -137,11 +141,33 @@ object Library {
     }
 
     fun steamLibraryArt(context: Context): List<Pair<Int, File>> {
-        val cache = File(SessionPrefs.activeSteamRoot(context), "appcache/librarycache")
+        val root = SessionPrefs.activeSteamRoot(context)
+        val cache = File(root, "appcache/librarycache")
+        val concealed = concealedSteamApps(root)
         return cache.listFiles().orEmpty().mapNotNull { dir ->
-            val appId = dir.name.toIntOrNull()?.takeIf { it !in NOT_GAMES } ?: return@mapNotNull null
+            val appId = dir.name.toIntOrNull()?.takeIf { it !in NOT_GAMES && it.toLong() !in concealed } ?: return@mapNotNull null
             steamCacheImage(cache, appId, STEAM_CAPSULES)?.let { appId to it }
         }
+    }
+
+    /** Apps the user hid (the "hidden" collection) or marked private in Steam. */
+    internal fun concealedSteamApps(root: File): Set<Long> {
+        val config = AddedGames.accountConfig(root) ?: return emptySet()
+        val hidden = runCatching {
+            val entries = org.json.JSONArray(File(config, "cloudstorage/cloud-storage-namespace-1.json").readText())
+            val entry = (0 until entries.length()).map { entries.getJSONArray(it) }
+                .firstOrNull { it.optString(0) == "user-collections.hidden" }?.optJSONObject(1)
+            if (entry == null || entry.optBoolean("is_deleted")) emptySet() else {
+                val collection = org.json.JSONObject(entry.optString("value"))
+                fun ids(key: String) = collection.optJSONArray(key)?.let { a -> (0 until a.length()).map { a.optLong(it) } }.orEmpty()
+                ids("added").toSet() - ids("removed").toSet()
+            }
+        }.getOrDefault(emptySet())
+        val private = runCatching {
+            PRIVATE_APPS.find(File(config, "localconfig.vdf").readText())?.groupValues?.get(1)
+                ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.toSet()
+        }.getOrNull().orEmpty()
+        return hidden + private
     }
 
     fun fromSteamClient(g: SteamGame): Boolean = g.library != ADDED && g.source == SOURCE_STEAM
@@ -155,8 +181,22 @@ object Library {
         var steam = steamGames(context, strictRead, arch)
         val targets = steam.filter(::fromSteamClient).map { SteamGrid.target(it, context) } + list.map { SteamGrid.target(it, context) }
         if (runCatching { SteamGrid.sync(context, targets) }.getOrDefault(false)) steam = steamGames(context, strictRead, arch)
-        return (steam + list.map { g -> addedGame(context, g, roots) }).distinctBy { it.gameId }
+        val claimed = claimedFolders(steam)
+        val own = list.filter { g ->
+            g.steamAppId != null || claimed.isEmpty() ||
+                (runCatching { g.folder.canonicalPath }.getOrDefault(g.folder.absolutePath) !in claimed &&
+                    AddedGames.guestPath(context, g.folder).let { it == null || it !in claimed })
+        }
+        return (steam + own.map { g -> addedGame(context, g, roots) }).distinctBy { it.gameId }
     }
+
+    fun claimedFolders(steam: List<SteamGame>): Set<String> = steam.filter(::fromSteamClient).flatMap { g ->
+        val dir = g.gameFiles ?: return@flatMap emptyList()
+        listOfNotNull(
+            runCatching { dir.canonicalPath }.getOrNull(),
+            runCatching { java.nio.file.Files.readSymbolicLink(dir.toPath()).toString() }.getOrNull(),
+        )
+    }.toSet()
 
     fun addedGame(context: Context, g: AddedGames.Game, roots: List<File> = steamLibraries(context).map { it.first }): SteamGame =
         AddedGameArt.resolve(context, g).let { art ->
@@ -166,6 +206,7 @@ object Library {
                 protonPrefix = protonPrefix(context, g.steamAppId?.toLong() ?: g.appId, libraries = roots),
                 icon = art.icon?.takeIf { it.extension.lowercase() != "ico" },
                 source = g.source, storeId = g.storeId,
+                logo = art.logo,
             )
         }
 

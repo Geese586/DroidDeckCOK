@@ -18,8 +18,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import com.droiddeck.launcher.frontend.Library
 import com.droiddeck.launcher.session.LoadingState
-import com.droiddeck.launcher.session.SteamCdn
-import com.droiddeck.launcher.session.SteamCdnProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -29,6 +27,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Icon
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -60,8 +59,6 @@ import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.getValue
@@ -72,6 +69,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -82,50 +81,106 @@ import androidx.compose.ui.text.style.TextOverflow
 
 
 @Composable
-fun HudText(text: String) {
+fun HudText(text: String, graph: FloatArray = FloatArray(0), color: String = "mint", opacity: Int = 70) {
+    if (text.isEmpty() && graph.size < 2) return
+    val accent = hudInk(color)
+    val wash = (opacity.coerceIn(30, 100) / 100f)
+    val ink = accent.copy(alpha = (0.5f + wash * 0.5f).coerceIn(0.62f, 1f))
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
-        Text(
-            text,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = Color.White,
+        Column(
+            horizontalAlignment = Alignment.End,
             modifier = Modifier
                 .padding(12.dp)
-                .background(Color(0x8C000000))
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-        )
+                .background(
+                    Brush.verticalGradient(
+                        listOf(accent.copy(alpha = wash * 0.28f), Color.Black.copy(alpha = wash * 0.72f)),
+                    ),
+                    RoundedCornerShape(8.dp),
+                )
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+        ) {
+            if (text.isNotEmpty()) Text(
+                text,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                color = ink,
+                textAlign = TextAlign.End,
+            )
+            if (graph.size >= 2) {
+                if (text.isNotEmpty()) Spacer(Modifier.height(4.dp))
+                HudGraph(graph, accent, wash)
+            }
+        }
     }
 }
 
-/**
- * One line of the loading screen's checklist; [detail] is what it says while it is the one running,
- * and [dragging] what it says once that has taken long enough to need saying.
- */
-private class LoadStage(
-    @androidx.annotation.StringRes val label: Int,
-    @androidx.annotation.StringRes val detail: Int,
-    @androidx.annotation.StringRes val dragging: Int? = null,
+@Composable
+private fun HudGraph(samples: FloatArray, accent: Color, wash: Float) {
+    Canvas(Modifier.width(148.dp).height(44.dp)) {
+        val maxMs = (samples.maxOrNull() ?: 16.7f).coerceAtLeast(16.7f)
+        val step = size.width / (samples.size - 1)
+        fun yOf(ms: Float) = size.height * (1f - (ms / maxMs).coerceIn(0f, 1f))
+        val fillAlpha = wash * 0.5f
+        val fill = Path().apply {
+            moveTo(0f, size.height)
+            samples.forEachIndexed { i, ms -> lineTo(i * step, yOf(ms)) }
+            lineTo(size.width, size.height)
+            close()
+        }
+        drawPath(
+            fill,
+            Brush.verticalGradient(listOf(HUD_SLOW.copy(alpha = fillAlpha), accent.copy(alpha = fillAlpha * 0.45f))),
+        )
+        val guide = yOf(16.7f)
+        drawLine(Color.White.copy(alpha = 0.32f), Offset(0f, guide), Offset(size.width, guide), strokeWidth = 1f)
+        for (i in 0 until samples.lastIndex) {
+            val tone = ((samples[i] - 8f) / 25f).coerceIn(0f, 1f)
+            drawLine(
+                mix(accent, HUD_SLOW, tone).copy(alpha = 0.55f + wash * 0.4f),
+                Offset(i * step, yOf(samples[i])),
+                Offset((i + 1) * step, yOf(samples[i + 1])),
+                strokeWidth = 2.5f,
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
+private fun hudInk(color: String): Color = Color(
+    when (color) {
+        "white" -> 0xFFF2F5F8
+        "sky" -> 0xFF66C0F4
+        "amber" -> 0xFFFFB74D
+        "violet" -> 0xFFD0A2FF
+        else -> 0xFF3DDC84
+    }.toInt(),
 )
+
+private fun mix(from: Color, to: Color, t: Float): Color {
+    val u = t.coerceIn(0f, 1f)
+    return Color(
+        red = from.red + (to.red - from.red) * u,
+        green = from.green + (to.green - from.green) * u,
+        blue = from.blue + (to.blue - from.blue) * u,
+        alpha = 1f,
+    )
+}
+
+private val HUD_SLOW = Color(0xFFFF5C6C.toInt())
+
+private class LoadStage(@androidx.annotation.StringRes val label: Int, @androidx.annotation.StringRes val detail: Int)
 
 private fun loadStages(steam: Boolean): List<LoadStage> = if (steam) listOf(
     LoadStage(R.string.load_runtime, R.string.load_runtime_detail),
     LoadStage(R.string.load_session, R.string.load_session_detail),
     LoadStage(R.string.load_steam, R.string.load_steam_detail),
-    LoadStage(R.string.load_opening_steam, R.string.load_opening_steam_detail, R.string.load_opening_steam_slow),
+    LoadStage(R.string.load_opening_steam, R.string.load_opening_steam_detail),
 ) else listOf(
     LoadStage(R.string.load_runtime, R.string.load_runtime_detail),
     LoadStage(R.string.load_desktop, R.string.load_desktop_detail),
     LoadStage(R.string.load_opening, R.string.load_opening_detail),
 )
 
-/** How long the last stage runs before it stops assuming the next second is the one. */
-private const val DRAGGING_AFTER_SECONDS = 45
-
-/**
- * The checklist stage a loading line's [topic] belongs to, -1 when it says nothing about the stage.
- * The lines are the session script's "== STEP" milestones and the installer's own progress; they
- * arrive in order, and the screen never steps back.
- */
 private fun stageOf(topic: LoadingState.Topic, steam: Boolean): Int = when (topic) {
     LoadingState.Topic.RUNTIME -> 0
     LoadingState.Topic.SESSION -> 1
@@ -139,31 +194,10 @@ private fun stageOf(topic: LoadingState.Topic, steam: Boolean): Int = when (topi
 fun LoadingOverlay(
     step: String, percent: Int, elapsed: String, hint: String, ended: Boolean,
     topic: LoadingState.Topic, readable: Boolean,
-    /** How long the stage in [topic] has been running, so a long one can say more about itself. */
-    stageSeconds: Int = 0,
-    /** The host a running download is coming from, empty when nothing is downloading (see [LoadingState]). */
-    source: String = "",
-    /** The Steam client's line ranking as measured for this session, empty when it was not measured. */
-    steamLine: String = "",
-    /** How fast the running Steam download is arriving, empty when nothing is downloading. */
-    speed: String = "",
-    /**
-     * The edges the line test ranked for this session, fastest first (SteamCdn's values). The list
-     * the screen offers is these plus "automatic" - the client-update chain has exactly two edges,
-     * so three rows is all of it and not a sample of something longer.
-     */
-    steamChoices: List<String> = emptyList(),
-    /** The edge asked for right now: a value from [steamChoices], or empty for automatic. */
-    steamPick: String = "",
-    /** A tap on that list; null keeps the list off the screen (a session with no edge to choose). */
-    onSteamPick: ((String) -> Unit)? = null,
-    /** One headline per checklist stage, in the same order as the stages [steam] selects. */
-    titles: List<String>,
-    /** An ended session's exit status and log path, shown small under the advice. */
-    title: String = stringResource(R.string.load_starting_steam),
-    steam: Boolean = true, onCancel: (() -> Unit)? = null,
+    title: String = stringResource(R.string.load_starting_steam), steam: Boolean = true, onCancel: (() -> Unit)? = null,
     endedDetail: String? = null,
     onRetry: (() -> Unit)? = null,
+    onRepair: (() -> Unit)? = null,
     onShareLogs: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
     flood: Color? = null,
@@ -178,20 +212,7 @@ fun LoadingOverlay(
         if (at > reached) reached = at
     }
     val active = reached.coerceAtMost(stages.lastIndex)
-    val title = titles.getOrElse(active) { titles.lastOrNull().orEmpty() }
-    // A stage that has been running for a while without anything to show for it says what it is
-    // waiting on, rather than repeating the promise it cannot keep: the screen cannot be still and
-    // say nothing, which is what makes a slow first launch look like a hang.
-    val dragging = !ended && active == stages.lastIndex && stageSeconds >= DRAGGING_AFTER_SECONDS
-    val detail = when {
-        percent >= 0 || readable -> step.replaceFirstChar { it.uppercase() }
-        dragging -> stringResource(stages[active].dragging ?: stages[active].detail)
-        else -> stringResource(stages[active].detail)
-    }
-    // The run that offers the edges: only the advanced Play asks for it, and only a Steam session
-    // has edges to offer. Everything that belongs to "the choice and the numbers to judge it by"
-    // hangs off this one flag, so the plain Play's screen stays the screen it always was.
-    val advanced = !ended && steam && onSteamPick != null && steamChoices.isNotEmpty()
+    val detail = if (percent >= 0 || readable) step.replaceFirstChar { it.uppercase() } else stringResource(stages[active].detail)
     val context = LocalContext.current
     val games by produceState(emptyList<Library.SteamGame>()) {
         value = withContext(Dispatchers.IO) { runCatching { Library.steamGames(context).sortedByDescending { it.lastPlayed } }.getOrDefault(emptyList()) }
@@ -200,7 +221,7 @@ fun LoadingOverlay(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+            .blockTouches(),
     ) {
         CapsuleWall(games, driftMs = 65_000, modifier = Modifier.alpha(0.3f))
         Box(
@@ -236,65 +257,13 @@ fun LoadingOverlay(
                 maxLines = if (ended) 12 else 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 6.dp).widthIn(max = 520.dp),
             )
-            // Why this line, above which line: the ranking the install's edge was chosen from, then
-            // the edge the bytes are actually coming from. Both read while the download runs, which
-            // is when the question is asked - the Toast that measured them is long gone by then.
-            if (!ended && steamLine.isNotEmpty()) Text(
-                stringResource(R.string.load_steam_line, steamLine),
-                fontSize = 12.sp, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-            if (!ended && source.isNotEmpty()) Text(
-                stringResource(R.string.load_source, source),
-                fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-            // How fast, not just how far: a crawl and a dead host look identical on a bar, and this
-            // number is what the user reads before deciding to tap another line just below. On the
-            // advanced run it is on that row already, next to the chips it is about.
-            if (!ended && !advanced && topic == LoadingState.Topic.STEAM && speed.isNotEmpty()) Text(
-                stringResource(R.string.load_speed, speed),
-                fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant,
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-            // The two edges the client install picks from, offered by hand while it runs: the script
-            // switches mid-file when one is tapped (see SteamLineSwitch), so the choice is not
-            // advice for next time but a change to this download.
-            //
-            // Shown only when this run asked for it - the "advanced play" button; Play's screen is
-            // the one it always was. It outlives the stage it belongs to: a client that is already
-            // current finishes the install stage in about two seconds, which used to put this list
-            // on screen for two seconds - long enough to see, too short to touch. And it takes taps
-            // before the install starts, not only during it: the file it writes is read at the
-            // first fetch, so a choice made while the session is still coming up decides the edge
-            // the download begins on.
-            //
-            // The clock and the rate ride this row (see SteamLinePicker); the two lines they used to
-            // own further down are dropped for that run, or the same number would be on screen twice
-            // - once where it is read, once where it is out of the way.
-            if (advanced) {
-                SteamLinePicker(
-                    steamChoices, steamPick, elapsed = elapsed, speed = speed,
-                    onPick = onSteamPick!!,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-            }
             if (!ended) LoadSegments(stages.size, active, percent, Modifier.padding(top = 18.dp))
-            // The clock, so a quiet stretch still reads as work going on rather than a hang.
-            if (!ended && !advanced && elapsed.isNotEmpty()) Text(
-                elapsed, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.75f),
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 12.dp),
-            )
             if (ended && endedDetail != null) Text(
                 endedDetail, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = colors.onSurfaceVariant.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 12.dp).widthIn(max = 520.dp),
             )
-            if (ended) EndedActions(onRetry, onShareLogs, onClose)
+            if (ended) EndedActions(onRetry, onRepair, onShareLogs, onClose)
         }
         if (!ended && hint.isNotEmpty()) Text(
             hint, fontSize = 13.sp, lineHeight = 18.sp, color = colors.onSurfaceVariant.copy(alpha = 0.8f), textAlign = TextAlign.Center,
@@ -302,20 +271,12 @@ fun LoadingOverlay(
             modifier = Modifier.align(Alignment.BottomCenter).padding(start = 120.dp, end = 120.dp, bottom = 28.dp),
         )
         if (!ended && onCancel != null) CancelHint(onCancel, Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp))
-        // The fork's own version, top left as on the Steam page: a build handed around by hand
-        // should be identifiable from the screen it is on, this one included.
-        Text(
-            "COK" + com.droiddeck.launcher.BuildConfig.FORK_VERSION,
-            style = MaterialTheme.typography.labelMedium,
-            color = colors.onBackground.copy(alpha = 0.5f),
-            modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
-        )
         if (flood != null) FloodGather(flood, ball, onFlooded)
     }
 }
 
 @Composable
-private fun EndedActions(onRetry: (() -> Unit)?, onShareLogs: (() -> Unit)?, onClose: (() -> Unit)?) {
+private fun EndedActions(onRetry: (() -> Unit)?, onRepair: (() -> Unit)?, onShareLogs: (() -> Unit)?, onClose: (() -> Unit)?) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         androidx.compose.runtime.withFrameNanos { }
@@ -324,7 +285,11 @@ private fun EndedActions(onRetry: (() -> Unit)?, onShareLogs: (() -> Unit)?, onC
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 22.dp)) {
         var firstUsed = false
         fun claim(): Modifier = if (firstUsed) Modifier else { firstUsed = true; Modifier.focusRequester(first) }
-        if (onRetry != null) PrimaryButton(stringResource(R.string.store_try_again), modifier = claim(), onClick = onRetry)
+        if (onRepair != null) PrimaryButton(stringResource(R.string.runtime_repair), modifier = claim(), onClick = onRepair)
+        if (onRetry != null) {
+            if (onRepair != null) SecondaryButton(stringResource(R.string.store_try_again), modifier = claim(), onClick = onRetry)
+            else PrimaryButton(stringResource(R.string.store_try_again), modifier = claim(), onClick = onRetry)
+        }
         if (onShareLogs != null) SecondaryButton(stringResource(R.string.drawer_share_logs), modifier = claim(),
             progress = com.droiddeck.launcher.session.SessionLogShare.progress, onClick = onShareLogs)
         if (onClose != null) SecondaryButton(stringResource(R.string.mode_back), modifier = claim(), onClick = onClose)
@@ -385,7 +350,6 @@ private fun CancelHint(onCancel: () -> Unit, modifier: Modifier = Modifier) {
 fun SessionPausedOverlay(title: String = stringResource(R.string.load_steam_paused), onResume: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
-    val interactionSource = remember { MutableInteractionSource() }
     val resumeFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         androidx.compose.runtime.withFrameNanos { }
@@ -395,7 +359,7 @@ fun SessionPausedOverlay(title: String = stringResource(R.string.load_steam_paus
         modifier = Modifier
             .fillMaxSize()
             .background(pal.background.copy(alpha = 0.94f))
-            .clickable(interactionSource = interactionSource, indication = null) {},
+            .blockTouches(),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -414,112 +378,4 @@ fun SessionPausedOverlay(title: String = stringResource(R.string.load_steam_paus
             )
         }
     }
-}
-
-/**
- * Which edge this download should use, as three chips: automatic first, then the two edges - and
- * beside them the two numbers that say what the download is doing with that edge.
- *
- * Three is the whole menu, not a page of one: the client-update chain has exactly two edges (see
- * the archive's Z section - the third candidate host does not even resolve), so "automatic" plus
- * two is every choice that exists. The tap changes the file in flight rather than a setting for
- * next time: the install script watches for it and restarts the current component on that edge.
- *
- * The clock and the rate belong here rather than on lines of their own. They are the answer to the
- * question the chips ask - "is this edge worth keeping" - and they used to be somewhere else: the
- * rate on a line of its own above, the clock under the bar at the bottom of the page, where the
- * hint that slides in at the bottom sat on top of it (DroidDeckCOK). Reading a rate and a choice
- * that are a whole panel apart is how "the tap changed nothing" was concluded from a screen that
- * was never showing the two things together.
- *
- * The chips are ordinary controls of this app, not labels that happen to take a tap: they take
- * focus from the pad (the ring and the lit border are the same language as every other control),
- * A confirms, and touch works as it always did. The first chip asks for the focus when the row
- * appears, so a pad user has something under the ring before pressing anything - a controller's
- * A goes to whatever holds focus, and without this the row was visible, lit and unreachable.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun SteamLinePicker(
-    choices: List<String>,
-    chosen: String,
-    /** "1:23 elapsed" - the clock, on this row instead of under the bar. */
-    elapsed: String,
-    /** "1.2 MB/s", or empty when nothing is being fetched. */
-    speed: String,
-    onPick: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = MaterialTheme.colorScheme
-    val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
-    // A page narrow enough to run out of width wraps rather than clips: three chips, a clock and a
-    // rate are one line on this device and two on a phone held upright, and neither is a puzzle.
-    FlowRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            stringResource(R.string.load_steam_pick),
-            fontSize = 12.sp, color = colors.onSurfaceVariant.copy(alpha = 0.7f),
-        )
-        LineChip(
-            stringResource(R.string.load_steam_pick_auto), chosen.isEmpty(),
-            modifier = Modifier.focusRequester(first),
-        ) { onPick(SteamCdn.AUTO) }
-        choices.forEach { value ->
-            LineChip(SteamCdnProbe.label(SteamCdn.hosts(value).first()), chosen == value) { onPick(value) }
-        }
-        if (elapsed.isNotEmpty()) Text(
-            elapsed, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-            color = colors.onSurfaceVariant.copy(alpha = 0.75f),
-        )
-        if (speed.isNotEmpty()) Text(
-            speed, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-            color = colors.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun LineChip(
-    text: String,
-    active: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val colors = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(14.dp)
-    val src = remember { MutableInteractionSource() }
-    // Focused (pad) or hovered (mouse): the same "under the finger" the rest of the app draws,
-    // so which chip A would press is never a guess.
-    val hot = rememberHot(src)
-    Text(
-        text,
-        fontSize = 12.sp,
-        color = if (active) colors.primary else colors.onSurfaceVariant,
-        modifier = modifier
-            .clip(shape)
-            .background(
-                when {
-                    active -> colors.primary.copy(alpha = 0.16f)
-                    hot -> colors.primary.copy(alpha = 0.10f)
-                    else -> Color.Transparent
-                },
-            )
-            .border(
-                if (active || hot) 2.dp else 1.dp,
-                when {
-                    active -> colors.primary.copy(alpha = 0.55f)
-                    hot -> colors.primary
-                    else -> colors.onSurfaceVariant.copy(alpha = 0.22f)
-                },
-                shape,
-            )
-            .hoverable(src)
-            .clickable(interactionSource = src, indication = LocalIndication.current, role = Role.Button, onClick = onClick)
-            .controllerConfirm(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    )
 }

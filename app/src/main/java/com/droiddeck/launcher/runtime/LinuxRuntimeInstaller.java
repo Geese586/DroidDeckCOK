@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.runtime;
 
+import com.droiddeck.launcher.core.AddonPack;
 import android.content.Context;
 import android.util.Log;
 
@@ -20,7 +21,6 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -106,36 +106,7 @@ public final class LinuxRuntimeInstaller {
     private static final String USER_DATA = "root";
 
     public static boolean install(Context context, Release release, ProgressListener listener) {
-        Job job;
-        boolean owner;
-        synchronized (JOB_LOCK) {
-            if (running != null && (running.removal || running.maintenance)) return false;
-            owner = running == null;
-            if (owner) { running = new Job(false, context.getString(R.string.user_apps_starting)); removalError = null; }
-            job = running;
-            if (listener != null) job.listeners.add(listener);
-        }
-        if (!owner) return join(job, listener);
-        try {
-            job.ok = installOnce(context.getApplicationContext(), release, new ProgressListener() {
-                @Override public void onProgress(String stage, int percent) {
-                    onProgress(Step.OTHER, stage, percent);
-                }
-
-                @Override public void onProgress(Step step, String stage, int percent) {
-                    job.step = step;
-                    job.stage = stage;
-                    job.percent = percent;
-                    for (ProgressListener l : job.listeners) l.onProgress(step, stage, percent);
-                }
-            });
-            return job.ok;
-        } finally {
-            synchronized (JOB_LOCK) {
-                running = null;
-            }
-            job.done.countDown();
-        }
+        return runInstall(context, listener, (ctx, l) -> installOnce(ctx, release, l));
     }
 
     /**
@@ -171,7 +142,7 @@ public final class LinuxRuntimeInstaller {
         Job job;
         boolean owner;
         synchronized (JOB_LOCK) {
-            if (running != null && running.removal) return false;
+            if (running != null && (running.removal || running.maintenance)) return false;
             owner = running == null;
             if (owner) { running = new Job(false, context.getString(R.string.user_apps_starting)); removalError = null; }
             job = running;
@@ -325,13 +296,11 @@ public final class LinuxRuntimeInstaller {
             emptyTrash(LinuxRuntime.rootDir(context).getParentFile());
             String downloading = context.getString(R.string.rtinst_downloading);
             if (listener != null) listener.onProgress(Step.DOWNLOADING, downloading, 0);
-            // Downloader reports a 0..1 fraction, or -1 while the total size is unknown; the
-            // source argument is the host the bytes are coming from, named in the stage so a
-            // download that sits still says which mirror is stalling rather than just "0%".
-            boolean ok = Downloader.downloadFileFrom(release.url, archive, true, (source, fraction) -> {
+            if (!AddonPack.PROOT.await(context)) throw new IOException("Cannot download proot");
+            if (!AddonPack.DIRECTAUDIO.await(context)) throw new IOException("Cannot download DirectAudio");
+            boolean ok = Downloader.downloadFile(release.url, archive, true, release.sha256, (fraction) -> {
                 if (listener != null) {
-                    String stage = source == null ? downloading : downloading + " · " + source;
-                    listener.onProgress(Step.DOWNLOADING, stage,
+                    listener.onProgress(Step.DOWNLOADING, downloading,
                             fraction < 0 ? -1 : Math.round(fraction * 100f));
                 }
             });
@@ -348,45 +317,7 @@ public final class LinuxRuntimeInstaller {
                 return false;
             }
 
-            File root = LinuxRuntime.rootDir(context);
-            File staging = new File(root.getParentFile(), LinuxRuntime.DIR + ".new");
-            File old = new File(root.getParentFile(), LinuxRuntime.DIR + ".old");
-            recoverInterruptedSwap(root, staging, old);
-            if (!discard(staging, null) || !staging.mkdirs()) return false;
-            if (listener != null) listener.onProgress(context.getString(R.string.rtinst_extracting), -1);
-            if (!extract(context, archive, staging, listener)) {
-                RuntimeFileTree.delete(staging, null);
-                return false;
-            }
-            FileUtils.writeString(new File(staging, VERSION_FILE), release.version);
-
-            if (!discard(old, null)) {
-                discard(staging, null);
-                return false;
-            }
-            if (root.isDirectory() && !root.renameTo(old)) {
-                RuntimeFileTree.delete(staging, null);
-                return false;
-            }
-
-            try {
-                RuntimeFileTree.carryHome(old, staging);
-            } catch (IOException e) {
-                Log.w(TAG, "could not carry root across the update; rolling back", e);
-                old.renameTo(root);
-                try { RuntimeFileTree.delete(staging, null); }
-                catch (IOException cleanup) { Log.w(TAG, "could not clear the failed staging tree", cleanup); }
-                return false;
-            }
-
-            if (!staging.renameTo(root)) {
-                File keptTo = new File(staging, USER_DATA);
-                if (keptTo.isDirectory() && old.isDirectory()) keptTo.renameTo(new File(old, USER_DATA));
-                if (old.isDirectory()) old.renameTo(root);
-                return false;
-            }
-            discard(old, null);
-            return LinuxRuntime.isInstalled(context);
+            return unpack(context, archive, release.version, listener);
         } catch (Exception e) {
             Log.e(TAG, "install", e);
             return false;
@@ -398,7 +329,7 @@ public final class LinuxRuntimeInstaller {
     /**
      * Installs from an archive the user supplied. Its removal quarantine is finished first, for the
      * reason {@link #installOnce} gives, and its download step is the one thing missing: there is
-     * nothing to fetch, only a file already on the device.
+     * nothing to fetch, only a file already on the device. (DroidDeckCOK)
      */
     private static boolean installFromFileOnce(Context context, File archive, Release catalogue,
                                                ProgressListener listener) {
@@ -409,7 +340,8 @@ public final class LinuxRuntimeInstaller {
             }
             File pendingRemoval = removalDirectory(LinuxRuntime.rootDir(context));
             if (pendingRemoval.exists() && listener != null) listener.onProgress(context.getString(R.string.rtinst_removing_leftovers), -1);
-            RuntimeFileTree.delete(pendingRemoval, null);
+            if (!discard(pendingRemoval, null)) throw new IOException("Cannot clear the previous runtime: " + pendingRemoval);
+            emptyTrash(LinuxRuntime.rootDir(context).getParentFile());
 
             String version = catalogue != null ? catalogue.version : null;
             String expected = catalogue != null ? catalogue.sha256 : null;
@@ -426,6 +358,12 @@ public final class LinuxRuntimeInstaller {
                 if (version == null || version.isEmpty()) version = localVersion(archive);
                 Log.w(TAG, "installing " + archive.getName() + " without a catalog checksum");
             }
+            // DroidDeckCOK: the proot and DirectAudio payloads are add-on packs in 0.6.0, and this
+            // fork ships them inside the APK, so await() unpacks them from the assets it already
+            // has rather than reaching for the network. Without them the unpacked rootfs boots to
+            // nothing - a runtime isInstalled() calls installed, that a session never leaves.
+            if (!AddonPack.PROOT.await(context)) throw new IOException("Cannot install proot");
+            if (!AddonPack.DIRECTAUDIO.await(context)) throw new IOException("Cannot install DirectAudio");
             return unpack(context, archive, version, listener);
         } catch (Exception e) {
             Log.e(TAG, "installFromFile", e);
@@ -450,8 +388,7 @@ public final class LinuxRuntimeInstaller {
         File staging = new File(root.getParentFile(), LinuxRuntime.DIR + ".new");
         File old = new File(root.getParentFile(), LinuxRuntime.DIR + ".old");
         recoverInterruptedSwap(root, staging, old);
-        RuntimeFileTree.delete(staging, null);
-        if (!staging.mkdirs()) return false;
+        if (!discard(staging, null) || !staging.mkdirs()) return false;
         if (listener != null) listener.onProgress(context.getString(R.string.rtinst_extracting), -1);
         if (!extract(context, archive, staging, listener)) {
             RuntimeFileTree.delete(staging, null);
@@ -459,7 +396,10 @@ public final class LinuxRuntimeInstaller {
         }
         FileUtils.writeString(new File(staging, VERSION_FILE), version);
 
-        RuntimeFileTree.delete(old, null);
+        if (!discard(old, null)) {
+            discard(staging, null);
+            return false;
+        }
         if (root.isDirectory() && !root.renameTo(old)) {
             RuntimeFileTree.delete(staging, null);
             return false;
@@ -485,7 +425,7 @@ public final class LinuxRuntimeInstaller {
             if (old.isDirectory()) old.renameTo(root);
             return false;
         }
-        RuntimeFileTree.delete(old, null);
+        discard(old, null);
         return LinuxRuntime.isInstalled(context);
     }
 
@@ -618,27 +558,25 @@ public final class LinuxRuntimeInstaller {
         }
     }
 
-    /**
-     * A whole-rootfs tar, which is not the shape the shared extractor handles: a distribution
-     * rootfs is full of hard links (one binary under several names), and an entry written as an
-     * empty file instead of its link target is a rootfs that boots to nothing. Symlinks, hard
-     * links and the executable bit are all carried over here.
-     *
-     * <p>Progress is a percentage of the archive actually read, counted in compressed bytes rather
-     * than in entries. A rootfs is a few hundred thousand files, and a screen that only hears about
-     * every 2000th one of them - with no number on any of them - shows one frozen line for minutes
-     * while the unpack is working exactly as intended. Which of the two that is cannot be told
-     * apart from the outside, and it was reported as a hang (DroidDeckCOK). Bytes move while the
-     * stream is consumed, so the number creeps the whole way through, including inside one large
-     * file; a percentage that stops moving is then a real stall rather than a reporting gap.
-     */
+    // Packages extract over the live runtime and their archives list a link before the file it
+    // names, so a kill mid-way must leave neither a truncated file nor a link to a missing one.
+    //
+    // DroidDeckCOK: a whole-rootfs tar is unpacked through this same entry point, and progress is a
+    // percentage of the archive actually read - counted in compressed bytes rather than in entries.
+    // A rootfs is a few hundred thousand files, and a screen that only hears about every 2000th one
+    // of them, with no number on any of them, shows one frozen line for minutes while the unpack is
+    // working exactly as intended. Which of the two that is cannot be told apart from the outside,
+    // and it was reported as a hang. Bytes move while the stream is consumed, so the number creeps
+    // the whole way through, including inside one large file; a percentage that stops moving is then
+    // a real stall rather than a reporting gap.
     public static boolean extract(Context context, File archive, File destination, ProgressListener listener) {
         String extracting = context.getString(R.string.rtinst_extracting);
         long total = Math.max(1L, archive.length());
-        // What has been reported so far, and when: written by reportRead, kept in arrays because the
-        // copy loop below ticks from inside a lambda-free inner block.
+        // What has been reported so far, and when: written by reportRead, kept in arrays so the
+        // copy loop below can tick from inside a lambda-free block.
         long[] shown = {-1L};
         long[] at = {0L};
+        java.util.LinkedHashMap<File, String> links = new java.util.LinkedHashMap<>();
         try (Counting counting = new Counting(new FileInputStream(archive));
              TarArchiveInputStream tar = new TarArchiveInputStream(
                      new ZstdCompressorInputStream(new BufferedInputStream(counting, 1 << 16)))) {
@@ -657,41 +595,59 @@ public final class LinuxRuntimeInstaller {
                 if (parent != null && !parent.isDirectory()) parent.mkdirs();
 
                 if (entry.isSymbolicLink()) {
-                    file.delete();
-                    FileUtils.symlink(entry.getLinkName(), file.getAbsolutePath());
+                    links.remove(file);
+                    links.put(file, entry.getLinkName());
                 } else if (entry.isLink()) {
                     File target = ArchivePaths.inside(destination, entry.getLinkName());
                     if (target == null) {
                         Log.w(TAG, "skipping hard link outside the rootfs: " + entry.getLinkName());
                         continue;
                     }
-                    file.delete();
+                    links.remove(file);
+                    File part = partFile(file);
+                    part.delete();
                     try {
-                        Files.createLink(file.toPath(), target.toPath());
+                        Files.createLink(part.toPath(), target.toPath());
                     } catch (IOException | UnsupportedOperationException e) {
                         if (target.isFile()) {
-                            Files.copy(target.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                            Files.copy(target.toPath(), part.toPath(), StandardCopyOption.REPLACE_EXISTING);
                         }
                     }
+                    if (part.exists()) place(part, file);
                 } else if (entry.isFile()) {
-                    try (OutputStream out = new FileOutputStream(file)) {
+                    links.remove(file);
+                    File part = partFile(file);
+                    try (OutputStream out = new FileOutputStream(part)) {
                         byte[] buffer = new byte[1 << 16];
                         int read;
                         int chunks = 0;
                         while ((read = tar.read(buffer)) != -1) {
                             out.write(buffer, 0, read);
                             // Roughly every four megabytes, so one large file moves the number too:
-                            // the per-entry tick below is silent for the whole of a 500 MB one.
+                            // a per-entry tick is silent for the whole of a 500 MB one.
                             if ((++chunks & 63) == 0) {
                                 reportRead(listener, extracting, counting.count, total, shown, at);
                             }
                         }
                     }
-                    if ((entry.getMode() & 0111) != 0) file.setExecutable(true, false);
+                    if ((entry.getMode() & 0111) != 0) part.setExecutable(true, false);
+                    place(part, file);
                 } else {
                     continue;
                 }
                 reportRead(listener, extracting, counting.count, total, shown, at);
+            }
+            for (java.util.Map.Entry<File, String> link : links.entrySet()) {
+                File file = link.getKey();
+                File part = partFile(file);
+                try {
+                    Files.deleteIfExists(part.toPath());
+                    Files.createSymbolicLink(part.toPath(), java.nio.file.Paths.get(link.getValue()));
+                    place(part, file);
+                } catch (IOException e) {
+                    Log.w(TAG, "symlink " + file + " -> " + link.getValue() + ": " + e);
+                    part.delete();
+                }
             }
             // The archive's tail padding can leave the count just short of its length; the unpack
             // is over, so the bar is finished rather than left a per cent from the end.
@@ -730,7 +686,7 @@ public final class LinuxRuntimeInstaller {
      * The bytes the decompressor has taken off the archive, which is what {@link #extract}'s
      * percentage is measured in: the uncompressed size is not known before the tar ends.
      */
-    private static final class Counting extends FilterInputStream {
+    private static final class Counting extends java.io.FilterInputStream {
         long count;
 
         Counting(InputStream in) {
@@ -757,5 +713,15 @@ public final class LinuxRuntimeInstaller {
             if (skipped > 0) count += skipped;
             return skipped;
         }
+    }
+
+    static File partFile(File file) {
+        return new File(file.getParentFile(), ".dd-part-" + Integer.toHexString(file.getName().hashCode()));
+    }
+
+    private static void place(File part, File file) throws IOException {
+        java.nio.file.Path path = file.toPath();
+        if (Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) Files.delete(path);
+        Files.move(part.toPath(), path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 }

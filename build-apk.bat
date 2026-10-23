@@ -310,6 +310,13 @@ if not exist "%ROOT%\app\src\main\jniLibs\arm64-v8a\libdirectaudiorelay.so" set 
 if not exist "%ROOT%\app\src\main\assets\linuxfs\libfakeinput.so" set "PAYLOAD_MISSING=1"
 if not exist "%ROOT%\app\src\main\assets\linuxfs\libssbs.so" set "PAYLOAD_MISSING=1"
 if not exist "%ROOT%\app\src\main\assets\linuxfs\usr\local\bin\gamescope" set "PAYLOAD_MISSING=1"
+rem  DroidDeckCOK: the five add-on packs (0.6.0's replacement for the payload that used to sit
+rem  inside assets/linuxfs) travel in the APK's own assets so the one-click local install needs no
+rem  network. A missing one does not fail the build - it silently turns into an empty
+rem  PACK_*_SHA256, and the device then cannot install the runtime at all - so it is checked here.
+for %%P in (proot directaudio tracking xbox comet) do (
+    if not exist "%ROOT%\app\src\main\assets\packs\%%P.tar.zst" set "PAYLOAD_MISSING=1"
+)
 if defined PAYLOAD_MISSING (
     echo.
     echo [WARN] This checkout is missing the session's native payload: either

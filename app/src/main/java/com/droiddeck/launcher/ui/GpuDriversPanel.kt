@@ -123,8 +123,6 @@ class GpuDriversState(
     val androidDownloads: List<DownloadRow> = emptyList(),
     val canRestoreBundled: Boolean = false,
     val activeBundle: String? = null,
-    /** 0..1 while every installed driver is being copied out to a folder, null when not. */
-    val exporting: Float? = null,
     val mode: String = GPU_MODE_AUTO,
     val display: DriverSlot = DriverSlot(),
     val runtime: DriverSlot = DriverSlot(),
@@ -146,8 +144,6 @@ class GpuDriversActions(
     val onImportLinux: () -> Unit = {},
     val onImportAndroid: () -> Unit = {},
     val onImportZip: () -> Unit = {},
-    /** Copy every installed driver into a folder the user picks. */
-    val onExportDrivers: () -> Unit = {},
     val onRestoreBundled: () -> Unit = {},
     val onMode: (String) -> Unit = {},
     val onRestart: () -> Unit = {},

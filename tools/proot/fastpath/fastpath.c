@@ -141,24 +141,46 @@ static int traced_by_match(const char *key) {
   return found;
 }
 
+static long init_sys(long nr, long a, long b, long c) {
+  static long (*real_syscall)(long, ...);
+  if (!real_syscall) real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
+  return real_syscall(nr, a, b, c);
+}
+
+static int program_32bit(const char *prog, int scripts) {
+  char head[256];
+  long fd = init_sys(SYS_openat, AT_FDCWD, (long)prog, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return 1;
+  long n = init_sys(SYS_read, fd, (long)head, sizeof head - 1);
+  init_sys(SYS_close, fd, 0, 0);
+  if (n < 0) return 1;
+  head[n] = 0;
+  if (n >= 2 && head[0] == '#' && head[1] == '!') {
+    if (scripts <= 0) return 1;
+    char *p = head + 2;
+    while (*p == ' ' || *p == '\t') p++;
+    char *e = p;
+    while (*e && *e != ' ' && *e != '\t' && *e != '\n' && *e != '\r') e++;
+    if (e == p || (!*e && n == (long)sizeof head - 1)) return 1;
+    *e = 0;
+    return program_32bit(p, scripts - 1);
+  }
+  return !(n >= 5 && memcmp(head, "\x7f" "ELF", 4) == 0 && head[4] == 2);
+}
+
 static int fex_runs_32bit(void) {
   if (strcmp(program_invocation_short_name, "FEX") != 0 && strcmp(program_invocation_short_name, "FEXInterpreter") != 0)
     return 0;
   char args[PATH_MAX + 64];
-  long fd = syscall(SYS_openat, AT_FDCWD, "/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+  long fd = init_sys(SYS_openat, AT_FDCWD, (long)"/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
   if (fd < 0) return 1;
-  long n = syscall(SYS_read, fd, args, sizeof args - 1);
-  syscall(SYS_close, fd);
+  long n = init_sys(SYS_read, fd, (long)args, sizeof args - 1);
+  init_sys(SYS_close, fd, 0, 0);
   if (n <= 0) return 1;
   args[n] = 0;
   const char *prog = args + strlen(args) + 1;
   if (prog >= args + n || !*prog) return 1;
-  unsigned char ident[5];
-  fd = syscall(SYS_openat, AT_FDCWD, prog, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) return 1;
-  n = syscall(SYS_read, fd, ident, sizeof ident);
-  syscall(SYS_close, fd);
-  return !(n == 5 && memcmp(ident, "\x7f" "ELF", 4) == 0 && ident[4] == 2);
+  return program_32bit(prog, 4);
 }
 
 static int in_tracer(struct bind *bd) {
@@ -315,34 +337,73 @@ static int to_guest(const char *h, char *g, size_t size) {
   return 0;
 }
 
-static int guest_text(const char *h, char *g) {
-  int in = h[0] == '/' && under(h, root, rootlen);
-  for (int i = 0; h[0] == '/' && !in && i < nbinds; i++) {
-    int live = held(&binds[i]);
-    if (live < 0) return -1;
-    in = live && under(h, binds[i].host, binds[i].hlen);
+static int host_order[MAX_BINDS + 1], norder, ordered;
+
+static int contains(const char *a, const char *b) {
+  size_t la = strlen(a);
+  return strlen(b) > la && under(b, a, la);
+}
+
+static const char *side_of(int i, int host) {
+  return host ? (i < 0 ? root : binds[i].host) : (i < 0 ? "/" : binds[i].guest);
+}
+
+static int insort(int *list, int m, int i, int host) {
+  const char *p = side_of(i, host);
+  int prev = -1;
+  for (int j = 0; j < m; j++) {
+    const char *q = side_of(list[j], host);
+    if (!strcmp(p, q) && !host) {
+      list[j] = i;
+      return m;
+    }
+    if (!strcmp(p, q) || contains(p, q)) prev = j;
   }
-  if (in) return to_guest(h, g, PATH_MAX);
-  memcpy(g, h, strlen(h) + 1);
+  memmove(list + prev + 2, list + prev + 1, (m - prev - 1) * sizeof *list);
+  list[prev + 1] = i;
+  return m + 1;
+}
+
+static int order_binds(void) {
+  if (__atomic_load_n(&ordered, __ATOMIC_ACQUIRE)) return 0;
+  for (int i = 0; i < nbinds; i++)
+    if (held(&binds[i]) < 0) return -1;
+  if (pthread_mutex_trylock(&bind_lock) != 0) return -1;
+  if (!ordered) {
+    int pending[MAX_BINDS + 1], m = 1;
+    pending[0] = -1;
+    for (int i = 0; i < nbinds; i++)
+      if (!binds[i].dropped) m = insort(pending, m, i, 0);
+    norder = 0;
+    for (int j = m - 1; j >= 0; j--) norder = insort(host_order, norder, pending[j], 1);
+    __atomic_store_n(&ordered, 1, __ATOMIC_RELEASE);
+  }
+  pthread_mutex_unlock(&bind_lock);
   return 0;
 }
 
 static int host_bind(const char *h) {
-  int found = -1;
-  for (int i = 0; i < nbinds; i++) {
-    int live = held(&binds[i]);
-    if (live < 0) return -2;
-    if (!live || !under(h, binds[i].host, binds[i].hlen)) continue;
-    if (found < 0 || binds[i].hlen > binds[found].hlen) found = i;
-    else if (binds[i].hlen == binds[found].hlen && strcmp(binds[i].guest, binds[found].guest) != 0) found = -3;
-  }
-  return found == -3 ? -2 : found;
+  if (order_binds() < 0) return -2;
+  for (int j = 0; j < norder; j++)
+    if (host_order[j] >= 0 && under(h, binds[host_order[j]].host, binds[host_order[j]].hlen)) return host_order[j];
+  return -1;
+}
+
+static int guest_text(const char *h, char *g) {
+  if (h[0] == '/' && under(h, root, rootlen)) return to_guest(h, g, PATH_MAX);
+  int i = h[0] == '/' ? host_bind(h) : -1;
+  if (i == -2) return -1;
+  if (i >= 0)
+    return snprintf(g, PATH_MAX, "%s%s", binds[i].guest, h + binds[i].hlen) >= PATH_MAX || reserved(g) ? -1 : 0;
+  memcpy(g, h, strlen(h) + 1);
+  return 0;
 }
 
 static long detranslated(char *text, const char *at) {
   if (text[0] != '/') return 0;
   if (!under(at, root, rootlen) && !under(text, root, rootlen)) {
     int own = host_bind(at), to = host_bind(text);
+    if (to == -1) return 0;
     if (own == -2 || to == -2) return FP_SLOW;
     if (own >= 0 && to >= 0 && strcmp(binds[own].host, binds[to].host) == 0) {
       const struct bind *bd = &binds[to];
@@ -613,8 +674,9 @@ static long resolve_in(const char *base, const char *path, int follow, struct re
   char norm[PATH_MAX];
   size_t o = 0;
   int dotdot = 0;
-  size_t plen = strlen(path);
-  int trailing = plen > 1 && path[plen - 1] == '/';
+  size_t plen = strlen(path), end = plen;
+  while (end > 1 && path[end - 1] == '/') end--;
+  int trailing = (plen > 1 && path[plen - 1] == '/') || (end > 0 && path[end - 1] == '.' && (end == 1 || path[end - 2] == '/'));
   for (int part = base ? 0 : 1; part < 2; part++) {
     for (const char *c = part ? path : base; *c;) {
       while (*c == '/') c++;

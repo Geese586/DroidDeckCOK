@@ -44,12 +44,10 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.VideogameAsset
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,6 +86,11 @@ import com.droiddeck.launcher.R
 private enum class CheckState { OK, WARN, BUSY }
 
 private const val STORAGE_TAB = 3
+private const val LAUNCHER_TAB = 2
+
+internal object SetupTabs {
+    var openLauncher = false
+}
 private const val GLASSES_TAB = 5
 
 @Composable
@@ -179,7 +182,8 @@ internal fun SetupPanel(
         onSave = { a.onDownloadPrefix(it); editDownloadPrefix = false },
     )
     val tabs = listOf(stringResource(R.string.setup_tab_overview), stringResource(R.string.setup_tab_controller), stringResource(R.string.setup_tab_launcher), stringResource(R.string.setup_tab_storage), stringResource(R.string.setup_tab_diagnostics), stringResource(R.string.setup_tab_glasses))
-    var tab by rememberSaveable { mutableStateOf(0) }
+    var tab by rememberSaveable { mutableStateOf(if (SetupTabs.openLauncher) LAUNCHER_TAB else 0) }
+    SetupTabs.openLauncher = false
     val chipFocus = remember { List(tabs.size) { FocusRequester() } }
     var tabTurned by remember { mutableStateOf(false) }
     val pick: (Int) -> Unit = { i -> tab = i; tabTurned = true }
@@ -242,24 +246,7 @@ internal fun SetupPanel(
                                     else -> stringResource(R.string.setup_runtime_current, s.installed ?: stringResource(R.string.setup_installed))
                                 },
                                 divider = divider && !s.busy,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    // A second way in, for a network that cannot reach GitHub at
-                                    // all: an archive fetched elsewhere and put on the device.
-                                    // Offered only while it can lead somewhere - once the runtime
-                                    // is current, the row's one button is the destructive one.
-                                    if (!s.ready || s.available != s.installed) {
-                                        SecondaryButton(
-                                            stringResource(R.string.setup_runtime_local),
-                                            enabled = !s.busy && !s.runtimeActionsBlocked && !s.sessionRunning,
-                                            compact = true,
-                                            onClick = a.onInstallRuntimeFromFile,
-                                        )
-                                        Spacer(Modifier.size(8.dp))
-                                    }
-                                    SecondaryButton(runtime, enabled = !s.busy && !s.runtimeActionsBlocked && !s.sessionRunning, compact = true, onClick = a.onRuntime)
-                                }
-                            }
+                            ) { SecondaryButton(runtime, enabled = !s.busy && !s.runtimeActionsBlocked && !s.sessionRunning, compact = true, onClick = a.onRuntime) }
                             if (s.busy) {
                                 Column(modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
                                     Text(
@@ -348,29 +335,6 @@ internal fun SetupPanel(
                             }
                         }
                         SettingsGroup(stringResource(R.string.setup_runtime)) { runtimeCheck(false) }
-                        // DroidDeckCOK: which of Valve's two client-update edges a Steam client
-                        // install pins. Automatic keeps the guest script's own order; the two
-                        // pins are for a network where one edge answers but crawls - the case the
-                        // line test on Diagnostics exists to measure.
-                        SettingsGroup(stringResource(R.string.setup_steam_cdn)) {
-                            ChoiceRow(
-                                host, "steam-cdn",
-                                stringResource(R.string.setup_steam_cdn),
-                                when (s.steamCdn) {
-                                    com.droiddeck.launcher.session.SteamCdn.FASTLY -> stringResource(R.string.setup_steam_cdn_fastly_hint)
-                                    com.droiddeck.launcher.session.SteamCdn.AKAMAI -> stringResource(R.string.setup_steam_cdn_akamai_hint)
-                                    else -> stringResource(R.string.setup_steam_cdn_auto_hint)
-                                },
-                                listOf(
-                                    com.droiddeck.launcher.session.SteamCdn.AUTO to stringResource(R.string.setup_steam_cdn_auto),
-                                    com.droiddeck.launcher.session.SteamCdn.FASTLY to stringResource(R.string.setup_steam_cdn_fastly),
-                                    com.droiddeck.launcher.session.SteamCdn.AKAMAI to stringResource(R.string.setup_steam_cdn_akamai),
-                                ),
-                                s.steamCdn,
-                                note = stringResource(R.string.setup_steam_cdn_note),
-                                onPick = a.onSteamCdn,
-                            )
-                        }
                     }
                     1 -> {
                         val controller = s.controller
@@ -395,6 +359,7 @@ internal fun SetupPanel(
                                         }
                                     }
                                 }
+                                if (s.theme == Themes.GRADIENT) GradientColorRows()
                                 ChoiceRow(
                                     host, "app-scale", stringResource(R.string.setup_app_scale), stringResource(R.string.setup_app_scale_hint),
                                     com.droiddeck.launcher.core.AppUiPrefs.scales.map { percent ->
@@ -403,6 +368,11 @@ internal fun SetupPanel(
                                             else R.string.ctrl_percent, percent,
                                         )
                                     }, s.appScale, onPick = a.onAppScale,
+                                )
+                                ChoiceRow(
+                                    host, "launcher-icon", stringResource(R.string.setup_launcher_icon), null,
+                                    com.droiddeck.launcher.LauncherIcon.options.map { (style, label) -> style to stringResource(label) },
+                                    s.launcherIcon, onPick = a.onLauncherIcon,
                                 )
                                 ToggleRow(host, "launcher-animations", stringResource(R.string.setup_animations), null,
                                     s.animationsEnabled, onChange = a.onAnimationsEnabled)
@@ -484,21 +454,6 @@ internal fun SetupPanel(
                             ActionRow(stringResource(R.string.setup_latest_logs), stringResource(R.string.drawer_logs_hint), stringResource(R.string.drawer_share_logs), a.onShareLogs,
                                 progress = com.droiddeck.launcher.session.SessionLogShare.progress)
                             ActionRow(stringResource(R.string.setup_saved_logs), stringResource(R.string.setup_saved_logs_hint, com.droiddeck.launcher.session.SessionPaths.KEEP_SESSIONS), stringResource(R.string.setup_clear_logs), a.onClearLogs)
-                            // The one-click install's own log, beside the session logs: a report is
-                            // only shown when a run went wrong, so this is the way to it after a run
-                            // that claimed to be fine, and after one the system killed outright.
-                            ActionRow(stringResource(R.string.first_local_logs_row), stringResource(R.string.first_local_logs_row_hint), stringResource(R.string.first_local_logs_save), a.onExportInstallLog)
-                            // DroidDeckCOK: the Steam line test. Valve serves the client from two
-                            // edges and the faster one is a property of the network, so the CDN
-                            // choice on the Launcher tab is made from a measurement, not a guess.
-                            ActionRow(
-                                stringResource(R.string.setup_line_test_row), stringResource(R.string.setup_line_test_hint),
-                                stringResource(if (s.steamLineTestBusy) R.string.common_working else R.string.setup_line_test_run),
-                                a.onSteamLineTest,
-                            )
-                            s.steamLineTestEdges?.let { edges ->
-                                SteamLineTestDialog(edges, onDismiss = a.onSteamLineTestDismiss)
-                            }
                             ActionRow(stringResource(R.string.setup_reset_settings), stringResource(R.string.setup_reset_settings_hint),
                                 stringResource(R.string.setup_reset_settings_button), a.onResetSettings)
                         }
@@ -510,58 +465,6 @@ internal fun SetupPanel(
     }
 }
 
-/**
- * What the Steam line test found: one line per edge, then the advice the numbers point at.
- * A dialog rather than a Toast because the numbers are the whole point - the user is about to
- * pin one of the two edges from them, or to learn that neither answers and a carried folder is
- * the only way the client gets in.
- */
-@Composable
-private fun SteamLineTestDialog(edges: List<com.droiddeck.launcher.session.SteamCdnProbe.Edge>, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.setup_line_test_title)) },
-        text = {
-            Column(modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                edges.forEach { edge ->
-                    Text(edge.host, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
-                    Text(
-                        if (!edge.reachable) stringResource(R.string.setup_line_test_unreachable, edge.error ?: "")
-                        else {
-                            val parts = mutableListOf(stringResource(R.string.setup_line_test_ok))
-                            if (edge.manifestMillis >= 0) parts.add(
-                                com.droiddeck.launcher.session.SteamCdnProbe.millisToString(edge.manifestMillis),
-                            )
-                            val rate = com.droiddeck.launcher.session.SteamCdnProbe.rateToString(edge.bytesPerSecond)
-                            if (rate.isNotEmpty()) parts.add(rate)
-                            parts.joinToString(" · ")
-                        },
-                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
-                    )
-                }
-                Text(
-                    stringResource(
-                        when {
-                            edges.none { it.reachable } -> R.string.setup_line_test_recommend_none
-                            com.droiddeck.launcher.session.SteamCdnProbe.recommendation(edges) == com.droiddeck.launcher.session.SteamCdn.FASTLY -> R.string.setup_line_test_recommend_fastly
-                            com.droiddeck.launcher.session.SteamCdnProbe.recommendation(edges) == com.droiddeck.launcher.session.SteamCdn.AKAMAI -> R.string.setup_line_test_recommend_akamai
-                            else -> R.string.setup_line_test_recommend_auto
-                        },
-                    ),
-                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) } },
-    )
-}
-
-/**
- * The checks as one card while they all pass: a ring with how many pass, "Ready to play" and one
- * line of what that means, and a Details chip that opens the checks themselves in place ([checks]).
- */
 @Composable
 private fun ReadinessCard(passing: Int, total: Int, line: String, open: Boolean, onDetails: () -> Unit, checks: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -621,8 +524,9 @@ internal fun LaunchSettings(s: FrontEndState, a: FrontEndActions, host: MenuHost
             val back = stringResource(R.string.hop_from_games)
             SettingCard(stringResource(R.string.setup_card_components), stringResource(R.string.setup_card_components_hint), "card:components", m.hopSource("card:components")) {
                 val at = Hops.sources["card:components"]
-                if (at == null) a.onComponents(true)
-                else Hops.go(HopOrigin("games", HOP_SURFACE_GAMES, null, "card:components", at, back, dest = "components", page = "components")) { a.onComponents(true) }
+                val open = { if (game == null) a.onComponents(true) else a.onGameComponents(game) }
+                if (at == null) open()
+                else Hops.go(HopOrigin("games", HOP_SURFACE_GAMES, null, "card:components", at, back, dest = "components", page = "components"), open)
             }
         }
         add { m ->
@@ -885,5 +789,23 @@ private fun LanguageRow(host: MenuHost, chosen: String, onPick: (String) -> Unit
                 }
             }
         }
+    }
+}
+
+/** The two colours of the Gradient theme, each a small square that opens the colour picker. */
+@Composable
+private fun GradientColorRows() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val (primary, secondary) = Themes.gradientColors
+    var picking by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val primaryLabel = stringResource(R.string.theme_gradient_primary)
+    val secondaryLabel = stringResource(R.string.theme_gradient_secondary)
+    SettingsRow(primaryLabel, null) { ColorCube(androidx.compose.ui.graphics.Color(primary), primaryLabel) { picking = 1 } }
+    SettingsRow(secondaryLabel, null) { ColorCube(androidx.compose.ui.graphics.Color(secondary), secondaryLabel) { picking = 2 } }
+    if (picking != 0) ColorPickerDialog(
+        if (picking == 1) primaryLabel else secondaryLabel, if (picking == 1) primary else secondary,
+        onDismiss = { picking = 0 },
+    ) { argb ->
+        if (picking == 1) Themes.setGradient(ctx, argb, secondary) else Themes.setGradient(ctx, primary, argb)
     }
 }

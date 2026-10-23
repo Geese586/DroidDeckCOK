@@ -63,7 +63,7 @@ private const val PROJECT_URL = "https://github.com/Geese586/DroidDeckCOK"
  * (`FORK_VERSION`, printed by the settings dialog as "COK(0.4.0.2)" and here as "(COK0.4.0.2)")
  * precisely so it can never be read as a version anything compares against.
  */
-private const val UPSTREAM_BASE = "0.5.0"
+private const val UPSTREAM_BASE = "0.6.0"
 
 /**
  * The official build's newest stable release, when it is ahead of the version this copy was made

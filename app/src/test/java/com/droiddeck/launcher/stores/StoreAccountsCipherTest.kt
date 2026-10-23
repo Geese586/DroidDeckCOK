@@ -112,6 +112,44 @@ class StoreAccountsCipherTest {
         assertEquals(creds.toString(), StoreAccounts.read(app, Store.EPIC).toString())
     }
 
+    @Test fun xboxNeverFallsBackToPlaintextWhenKeystoreFails() {
+        StoreAccounts.keys = broken
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            StoreAccounts.write(app, Store.XBOX, JSONObject().put("username", "test@example.test").put("slots", JSONObject().put("user-tokens", "synthetic-secret")))
+        }
+        assertFalse(file(Store.XBOX).exists())
+        StoreAccounts.keys = fake
+        StoreAccounts.write(app, Store.XBOX, creds)
+        assertTrue(CredentialCipher.isEnvelope(JSONObject(file(Store.XBOX).readText())))
+    }
+
+    @Test fun xboxUsernameAndBackendSlotsAreEncryptedTogether() {
+        val xbox = JSONObject().put("username", "test@example.test").put("slots", JSONObject().put("user-tokens", "synthetic-secret"))
+        StoreAccounts.write(app, Store.XBOX, xbox)
+        assertFalse(file(Store.XBOX).readText().contains("synthetic-secret"))
+        assertFalse(file(Store.XBOX).readText().contains("test@example.test"))
+        assertEquals("test@example.test", StoreAccounts.signedInAs(app, Store.XBOX))
+    }
+
+    @Test fun xboxShowsTheGamertagElseAMaskedEmail() {
+        StoreAccounts.write(app, Store.XBOX, JSONObject().put("username", "player@example.test"))
+        assertEquals("p•••@example.test", StoreAccounts.displayName(app, Store.XBOX))
+        StoreAccounts.write(app, Store.XBOX, JSONObject().put("username", "player@example.test").put("gamertag", "Some Gamertag"))
+        assertEquals("Some Gamertag", StoreAccounts.displayName(app, Store.XBOX))
+        assertEquals("player@example.test", StoreAccounts.signedInAs(app, Store.XBOX))
+        StoreAccounts.write(app, Store.EPIC, creds)
+        assertEquals("Someone", StoreAccounts.displayName(app, Store.EPIC))
+        assertEquals("n•••", StoreAccounts.maskEmail("nickname"))
+    }
+
+    @Test fun xboxDisplayNameDoesNotRevealEmailWhenCredentialsAreTemporarilyUnavailable() {
+        StoreAccounts.write(app, Store.XBOX, JSONObject().put("username", "player@example.test"))
+        StoreAccounts.keys = Flaky(key, 1) { java.security.ProviderException("busy") }
+        assertEquals(Store.XBOX.label, StoreAccounts.displayName(app, Store.XBOX))
+        assertTrue(StoreAccounts.isUnavailable(Store.XBOX))
+        assertTrue(file(Store.XBOX).exists())
+    }
+
     @Test fun signOutRemovesTheFile() {
         StoreAccounts.write(app, Store.GOG, creds)
         StoreAccounts.clear(app, Store.GOG)

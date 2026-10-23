@@ -3,7 +3,6 @@ import hashlib
 import gzip
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tarfile
@@ -13,13 +12,27 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path('app/build/runtime-inputs.json')
+# DroidDeckCOK: this fork ships the five packs inside the APK's own assets, so they are built
+# straight into app/src/main/assets/packs (app/build.gradle hashes them from there and
+# AddonPack.install unpacks them from there). Upstream keeps them in build/packs and only downloads
+# them from GitHub Releases.
+PACKS = Path('app/src/main/assets/packs')
+
+# Runtime trees shipped as add-on packs (tools/packs/build.sh) rather than inside the APK.
+PACKED = {'assets/linuxfs/usr/local/lib/droiddeck-xbox/': 'xbox', 'assets/linuxfs/usr/local/lib/droiddeck-comet/': 'comet',
+          'assets/directaudio/': 'directaudio'}
+PACKED_FILES = {'lib/arm64-v8a/libproot.so': ('proot', 'libproot.so'),
+                'lib/arm64-v8a/libproot-loader.so': ('proot', 'libproot-loader.so')}
+PACKED_LIBRARIES = ['lib/arm64-v8a/libopencv_java4.so', 'lib/arm64-v8a/libmediapipe_tasks_jni.so']
+PACK_NAMES = ['proot', 'directaudio', 'tracking', 'xbox', 'comet']
 SOURCE_PATHS = ['app/build.gradle', 'app/src/main/cpp/fakeinput_steam.cpp', 'app/src/main/assets/pulseaudio.tzst',
                 'tools/linuxfs', 'tools/proot', 'tools/aaudio-sink', 'tools/directaudio',
                 'tools/gamescope/release.env', 'tools/droiddeck-esync/release.env',
-                'tools/mangoapp', 'tools/msitools', 'tools/comet', 'tools/build_local.sh',
+                'tools/mangoapp', 'tools/msitools', 'tools/pipewire', 'tools/comet', 'tools/xbox', 'tools/build_local.sh',
                 'tools/release/runtime_inputs.py', 'app/src/main/assets/desktop-removal',
                 'tools/quest', 'tools/vr/src', 'tools/vr/driver_droiddeck', 'tools/vr/layer', 'tools/vr/build.sh',
                 'app/src/main/cpp/waylandcomp/src/headpose_shm.h',
+                'app/src/main/cpp/venc/venc_proto.h',
                 'app/src/main/cpp/waylandcomp/src/spatialpose_shm.h',
                 'app/src/main/cpp/adrenotools/src/hook/kgsl.h',
                 'app/src/main/assets/graphics_driver/adrenotools-turnip25.1.0.tzst']
@@ -35,39 +48,12 @@ def digest(path):
     return result.hexdigest()
 
 
-# The version strings are the release button, not part of the payload: this fork's owner bumps
-# them by hand before every build, and hashing the file exactly as it stands turned "bump the
-# version" into "the build dies saying the runtime sources moved", with a checkout that had
-# nothing wrong with it. They are blanked out before hashing; every other byte of build.gradle is
-# still hashed, so a real edit to the build script still trips the check.
-VERSION_LINES = re.compile(
-    r'(?m)^[ \t]*(?:'
-    r'versionCode(?![A-Za-z])'
-    r'|versionName(?![A-Za-z])'
-    r'|buildConfigField[ \t]*\(?[ \t]*"String"[ \t]*,[ \t]*"FORK_VERSION"'
-    r')[^\n]*$'
-)
-
-
-def source_digest(path):
-    text = path.read_text(encoding='utf-8')
-    blanked = VERSION_LINES.sub('# <version line>', text)
-    return hashlib.sha256(blanked.encode('utf-8')).hexdigest()
-
-
 def sources(root):
     files = []
     for name in SOURCE_PATHS:
         path = root / name
         files.extend(path.rglob('*') if path.is_dir() else [path])
-    # as_posix(), not str(): on Windows str() of a relative Path spells the separators as "\",
-    # and every name here is compared against a "/" one - the required() list, the APK's own zip
-    # names in check_apk(), and a manifest CI wrote inside a Linux container. Upstream records on
-    # Linux, where the two agree; this fork records on Windows, where they do not. See the fork's
-    # archive README, section 0.
-    return {path.relative_to(root).as_posix():
-            (source_digest(path) if path.relative_to(root).as_posix() == 'app/build.gradle' else digest(path))
-            for path in sorted(set(files))
+    return {path.relative_to(root).as_posix(): digest(path) for path in sorted(set(files))
             if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc'}
 
 
@@ -77,21 +63,15 @@ def outputs(root):
         base = root / 'app/src/main/assets' / tree
         for path in base.rglob('*'):
             if path.is_file() and not any(part.startswith('.') for part in path.relative_to(base).parts):
-                # Both sides as_posix(): the key is what required() and the zip's names are
-                # spelled with, and the value is read back through root / it, which takes "/".
-                result['assets/' + tree + '/' + path.relative_to(base).as_posix()] = \
-                    path.relative_to(root).as_posix()
+                result['assets/' + tree + '/' + path.relative_to(base).as_posix()] = path.relative_to(root).as_posix()
     for library in ['libproot.so', 'libproot-loader.so', 'libdirectaudiorelay.so']:
         result['lib/arm64-v8a/' + library] = 'app/src/main/jniLibs/arm64-v8a/' + library
     result['assets/pulseaudio.tzst'] = 'app/build/prepared-assets/pulseaudio.tzst'
-    # The audio bundle is the only payload upstream keeps in build/: its turnip sets are CI's
-    # output and land there too. This fork has no tools/build_local.sh, so its copies of the three
-    # 0.5.0 sets sit beside every other payload in src/main/assets - and stageRuntimeAssets makes
-    # them win over build/prepared-assets. Recorded from there so a `clean`, which empties build/,
-    # cannot turn a plain gradle build into "runtime inputs have not been prepared". (DroidDeckCOK)
-    for name in ['turnip25.1.0-quest1', 'turnip26.3.0-a6xx', 'turnip26.3.0-quest2']:
+    result['assets/graphics_driver/adrenotools-turnip25.1.0-quest1.tzst'] = \
+        'app/build/prepared-assets/graphics_driver/adrenotools-turnip25.1.0-quest1.tzst'
+    for name in ['turnip26.3.0-a6xx', 'turnip26.3.0-quest2']:
         result[f'assets/graphics_driver/adrenotools-{name}.tzst'] = \
-            f'app/src/main/assets/graphics_driver/adrenotools-{name}.tzst'
+            f'app/build/prepared-assets/graphics_driver/adrenotools-{name}.tzst'
     return result
 
 
@@ -101,7 +81,8 @@ def required():
               for name in ['turnip26.3.0-a6xx', 'turnip26.3.0-quest2']]
     paths += ['assets/linuxfs/' + name for name in ['libfakeinput.so', 'libblsession.so',
              'libblfastpath.so', 'libssbs.so', 'usr/local/bin/droiddeck-clipboard',
-             'usr/local/bin/gamescope', 'usr/local/lib/droiddeck/uruntime']]
+             'usr/local/bin/gamescope', 'usr/local/lib/droiddeck/uruntime',
+             'usr/local/lib/droiddeck-pipewire.tzst']]
     for arch in ['x86_64', 'i386']:
         paths += ['assets/linuxfs/' + arch + '/' + lib for lib in ['libfakeinput.so', 'libblsession.so']]
     paths += ['assets/linuxfs/x86_64/' + lib for lib in
@@ -123,6 +104,9 @@ def required():
               ['mangoapp', 'libfmt.so.10', 'libspdlog.so.1.13', 'libglfw.so.3', 'libtraceevent.so.1', 'libtracefs.so.1']]
     paths += ['assets/linuxfs/usr/local/lib/droiddeck-comet/' + name for name in
               ['comet', 'GalaxyCommunication.exe', 'update-permissions.exe', 'LICENSE', 'version']]
+    paths += ['assets/linuxfs/usr/local/lib/droiddeck-xbox/' + name for name in
+              ['xodus-cli', 'xodus-service', 'version', 'backend.lock.json', 'runtime.lock.json', 'LICENSE.xodus', 'LICENSE.nexus', 'LICENSE.LGPL-2.1', 'LICENSE.nghttp2',
+               'windows/xgameruntime.dll', 'windows/winhttp.dll', 'windows/windows.web.dll', 'windows/twinapi.appcore.dll', 'windows/libnghttp2.dll']]
     for driver in ['linux-wine11', 'linux-wine11-systhread']:
         paths += ['assets/directaudio/' + driver + '/' + name for name in
                   ['aarch64-unix/winedirectaudio.so', 'aarch64-windows/winedirectaudio.drv',
@@ -175,8 +159,7 @@ def verify(root=ROOT):
     except (OSError, ValueError):
         raise ValueError('Runtime inputs have not been prepared. Run tools/build_local.sh.')
     if data.get('version') != 1 or data.get('sources') != sources(root):
-        raise ValueError('Runtime sources changed since preparation. Run tools/build_local.sh, or '
-                         'python tools/release/runtime_inputs.py record if only this checkout moved.')
+        raise ValueError('Runtime sources changed since preparation. Run tools/build_local.sh.')
     for name in required():
         if name not in data['outputs']:
             raise ValueError('Runtime manifest missing ' + name)
@@ -189,10 +172,49 @@ def verify(root=ROOT):
     return data
 
 
+def pack_digests(root, name):
+    path = root / PACKS / (name + '.tar.zst')
+    if not path.is_file():
+        raise ValueError('Missing add-on pack ' + name + '. Run tools/packs/build.sh app/src/main/assets/packs.')
+    process = subprocess.Popen(['zstd', '-dc', str(path)], stdout=subprocess.PIPE)
+    digests = {}
+    try:
+        with tarfile.open(fileobj=process.stdout, mode='r|') as archive:
+            for member in archive:
+                if member.isfile():
+                    digests[member.name] = hashlib.sha256(archive.extractfile(member).read()).hexdigest()
+    finally:
+        process.stdout.close()
+    if process.wait():
+        raise ValueError('Invalid add-on pack ' + name)
+    return digests
+
+
 def check_apk(apk, root=ROOT):
     data = verify(root)
+    packs = {name: pack_digests(root, name) for name in PACK_NAMES}
     with ZipFile(apk) as package:
+        names = set(package.namelist())
+        for library in PACKED_LIBRARIES:
+            if library in names:
+                raise ValueError('APK still carries ' + library + ', which the tracking pack provides')
+            if library.rsplit('/', 1)[1] not in packs['tracking']:
+                raise ValueError('Tracking pack missing ' + library)
         for name, output in data['outputs'].items():
+            if name in PACKED_FILES:
+                pack, rel = PACKED_FILES[name]
+                if name in names:
+                    raise ValueError('APK still carries ' + name + ', which the ' + pack + ' pack provides')
+                if packs[pack].get(rel) != output['sha256']:
+                    raise ValueError('Add-on pack ' + pack + ' is missing or has a stale ' + name)
+                continue
+            prefix = next((p for p in PACKED if name.startswith(p)), None)
+            if prefix:
+                if name in names:
+                    raise ValueError('APK still carries ' + name + ', which the ' + PACKED[prefix] + ' pack provides')
+                if packs[PACKED[prefix]].get(name[len(prefix):]) != output['sha256']:
+                    raise ValueError('Add-on pack ' + PACKED[prefix] + ' is missing or has a stale ' + name)
+                continue
             try:
                 content = package.read(name)
             except KeyError:

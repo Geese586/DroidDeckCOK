@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,7 +48,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
-import com.droiddeck.launcher.BuildConfig
 import com.droiddeck.launcher.frontend.Library
 import com.droiddeck.launcher.glasses.GlassesMenuMirror
 import androidx.compose.foundation.layout.width
@@ -108,91 +106,77 @@ internal fun SteamHome(s: FrontEndState, a: FrontEndActions, modifier: Modifier)
             }
         },
     )
+    val (glasses, glassesSettings) = rememberGlasses()
+    val headset = glasses.present && glasses.canControl
+    val drop = rememberDropSheetState()
+    LaunchedEffect(headset) { if (!headset && (drop.open || drop.shown)) drop.reset() }
     Box(modifier.clipToBounds()) {
-        val (glasses, glassesSettings) = rememberGlasses()
-        val headset = glasses.present && glasses.canControl
-        val drop = rememberDropSheetState()
-        LaunchedEffect(headset) { if (!headset && (drop.open || drop.shown)) drop.reset() }
-        // DroidDeckCOK: 0.5.0 rewrote SteamHome's hero. The pre-merge copy of it (a second
-        // LiftHero carrying this fork's two extra buttons) was still sitting in this Box and
-        // drawing underneath, so the frame that won was the one without them. Removed - the
-        // buttons below now hang off the 0.5.0 hero, which is the only one left.
-        LiftHero(
-            key = "steam", tabs = tabs,
-            drop = drop.takeIf { headset },
-            overlay = { lifted ->
-                if (headset) DropSheet(
-                    drop, glassesTabs(glasses), covered = lifted,
-                    button = { enabled ->
-                        PrimaryButton(stringResource(R.string.games_play_steamvr), enabled = !s.busy && glasses.usable, large = true, icon = Icons.Filled.PlayArrow, fill = true,
-                            modifier = Modifier.fillMaxWidth().testTag("play-steamvr")) { if (enabled) { drop.open = false; a.onPlaySteamVr() } }
-                    },
-                ) { tab ->
-                    GlassesGroups(rememberMenuHost(), glasses, glassesSettings,
-                        onRecenter = GlassesMenuMirror::recenter, inSession = false, tab = tab)
-                }
-            },
-            onOpen = a.onSteamSettings, onPrimary = a.onPlay,
-            modifier = Modifier.matchParentSize(),
-            start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
-            background = {
-                when {
-                    games.isEmpty() -> EmptyLibrary(
-                        avoid = words,
-                        wall = if (owned.isEmpty() && featured.isEmpty()) null else { { CapsuleWall(emptyList(), owned = owned, featured = featured) } },
-                    ) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
-                    games.size < WALL_MIN_GAMES -> CapsuleFan(games)
-                    else -> CapsuleWall(games, owned = owned, featured = featured)
-                }
-            },
-            scrim = { if (games.size >= WALL_MIN_GAMES) WallFade() },
-            words = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.onPlaced { words = it.boundsInParent() },
-                ) {
-                    Wordmark(if (narrow) 30.dp else 40.dp)
-                    if (s.busy || !s.ready || (s.available != null && s.available != s.installed)) RuntimeChip(s)
-                }
-            },
-            button = { click ->
-                // DroidDeckCOK: 0.5.0 rewrote this block down to a single Play button; these two went
-                // with it. Play stays exactly where it was, the same size, and the measured start sits
-                // beside it at the same height so the two read as one choice with two answers.
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, large = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.testTag("play-steam"), onClick = click)
-                        // The same session, with the client's two edges offered on its loading screen so
-                        // a line that crawls can be left for the other one in place. Nothing is timed
-                        // before it starts. Plain Play is untouched and never carries the menu.
-                        SecondaryButton(
-                            stringResource(R.string.games_play_steam_advanced),
-                            enabled = !s.busy, large = true,
-                            modifier = Modifier.testTag("play-steam-advanced"),
-                            onClick = a.onPlayMeasured,
-                        )
-                    }
-                    // The way in for a device whose network cannot fetch any of it: one folder holding
-                    // the runtime, Proton and the Steam client, put in one after another. Shown while
-                    // the folder last picked still holds something the device has not got, so a ready
-                    // device never sees it. (DroidDeckCOK)
-                    if (s.firstLocalInstallNeeded) SecondaryButton(
-                        stringResource(R.string.first_local_install),
-                        enabled = !s.busy, compact = narrow,
-                        onClick = a.onFirstLocalInstall,
-                    )
-                }
-            },
-            rows = { tab -> a.modeSheet(mode, tab, extras) },
-        )
-        // The fork's own version, top left where nothing else claims space: with builds passed
-        // around by hand the screen itself should say which one it is (e.g. "COK0.5.0").
-        Text(
-            "COK" + BuildConfig.FORK_VERSION,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-            modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
-        )
+    LiftHero(
+        key = "steam", tabs = tabs,
+        drop = drop.takeIf { headset },
+        overlay = { lifted ->
+            if (headset) DropSheet(
+                drop, glassesTabs(glasses) + (GlassesTab.CONTROLLERS to stringResource(R.string.vr_controllers_tab)), covered = lifted,
+                button = { enabled ->
+                    PrimaryButton(stringResource(R.string.games_play_steamvr), enabled = !s.busy && glasses.usable, large = true, icon = Icons.Filled.PlayArrow, fill = true,
+                        modifier = Modifier.fillMaxWidth().testTag("play-steamvr")) { if (enabled) { drop.open = false; a.onPlaySteamVr() } }
+                },
+            ) { tab ->
+                if (tab == GlassesTab.CONTROLLERS) VrControllerGroups(rememberMenuHost())
+                else GlassesGroups(rememberMenuHost(), glasses, glassesSettings,
+                    onRecenter = GlassesMenuMirror::recenter, inSession = false, tab = tab)
+            }
+        },
+        onOpen = a.onSteamSettings, onPrimary = a.onPlay,
+        modifier = Modifier.matchParentSize(),
+        start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
+        background = {
+            when {
+                games.isEmpty() -> EmptyLibrary(
+                    avoid = words,
+                    wall = if (owned.isEmpty() && featured.isEmpty()) null else { { CapsuleWall(emptyList(), owned = owned, featured = featured) } },
+                ) { Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1.06f; scaleY = 1.06f }) { WallFade() } }
+                games.size < WALL_MIN_GAMES -> CapsuleFan(games)
+                else -> CapsuleWall(games, owned = owned, featured = featured)
+            }
+        },
+        scrim = { if (games.size >= WALL_MIN_GAMES) WallFade() },
+        words = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.onPlaced { words = it.boundsInParent() },
+            ) {
+                Wordmark(if (narrow) 30.dp else 40.dp)
+                if (s.busy || !s.ready || (s.available != null && s.available != s.installed)) RuntimeChip(s)
+            }
+        },
+        button = { click ->
+            // DroidDeckCOK: 0.5.0 rewrote this block down to a single Play button. Play stays
+            // exactly where it was, the same size, and the second button sits beside it at the same
+            // height so the two read as one choice with two answers.
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                PrimaryButton(stringResource(R.string.games_play_steam), enabled = !s.busy, main = true, large = true, icon = Icons.Filled.PlayArrow, modifier = Modifier.testTag("play-steam"), onClick = click)
+                // The way in for a device whose network cannot fetch any of it: one folder holding
+                // the runtime, Proton and the Steam client, put in one after another. Shown while
+                // the folder last picked still holds something the device has not got, so a ready
+                // device never sees it. (DroidDeckCOK)
+                if (s.firstLocalInstallNeeded) SecondaryButton(
+                    stringResource(R.string.first_local_install),
+                    enabled = !s.busy, compact = narrow,
+                    onClick = a.onFirstLocalInstall,
+                )
+            }
+        },
+        rows = { tab -> a.modeSheet(mode, tab, extras) },
+    )
+    // The fork's own version, top left where nothing else claims space: with builds passed
+    // around by hand the screen itself should say which one it is (e.g. "COK0.4.0.6").
+    androidx.compose.material3.Text(
+        "COK" + com.droiddeck.launcher.BuildConfig.FORK_VERSION,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+        modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 16.dp),
+    )
     }
 }
 

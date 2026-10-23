@@ -30,11 +30,9 @@ object DownloadSource {
     private val MODES = listOf(MODE_AUTO, MODE_DIRECT, MODE_MIRROR, MODE_CUSTOM)
 
     /**
-     * DroidDeckCOK: a fresh install starts on [MODE_MIRROR], not [MODE_AUTO]. Upstream's automatic
-     * mode tries GitHub itself first, which is right for the audience upstream ships to and wrong
-     * for this one: on a mainland network that first attempt is a connect timeout before any
-     * accelerator is reached. A user who does reach GitHub switches to Direct in Setup - the choice
-     * is remembered per install.
+     * DroidDeckCOK: a fresh install starts on the mirror. Upstream's "auto" asks GitHub directly
+     * first, and on the networks this fork targets that request simply times out before a proxy is
+     * ever tried. MODE_AUTO stays one tap away in the settings.
      */
     private const val DEFAULT_MODE = MODE_MIRROR
 
@@ -47,21 +45,18 @@ object DownloadSource {
     private val CATALOGS = listOf(
         "https://raw.githubusercontent.com/Droid-Deck/DroidDeck-CI/",
         "https://raw.githubusercontent.com/Droid-Deck/DroidDeck-Components/",
+        "https://raw.githubusercontent.com/Droid-Deck/Drivers-CI/",
     )
 
     data class Mirror(val host: String, val api: Boolean)
 
-    /**
-     * DroidDeckCOK: `ghfile.geekertao.top` is added to upstream's four because it answered when the
-     * fork surveyed accelerators from mainland China. `ghfast.top` answered nothing in that survey
-     * and stays last, where it costs one connect timeout only after the others have been tried.
-     */
     val MIRRORS = listOf(
         Mirror("gh-proxy.com", true),
         Mirror("gh-proxy.org", true),
         Mirror("ghproxy.net", false),
-        Mirror("ghfile.geekertao.top", false),
         Mirror("ghfast.top", false),
+        // DroidDeckCOK: a fifth host, because the four above can all be down at once.
+        Mirror("ghfile.geekertao.top", false),
     )
 
     @Volatile

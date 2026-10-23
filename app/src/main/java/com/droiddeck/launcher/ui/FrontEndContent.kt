@@ -238,10 +238,6 @@ private fun Content(
         return
     }
     if (selected == "updates") {
-        // Not upstream's UpdatesPage: this checkout cannot install an official build over its own
-        // signature, so the page hands over the releases address instead, and reads the same
-        // catalog to say which version DroidDeck is on. Upstream's page is left in place, unused,
-        // so it survives an upstream merge (see 00Design/custom-changes).
         UpdatesForkPage(s, a, modifier.padding(horizontal = padH, vertical = padV))
         return
     }

@@ -52,6 +52,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,7 +87,6 @@ import coil.compose.AsyncImage
 import com.droiddeck.launcher.R
 import com.droiddeck.launcher.core.FileUtils
 import com.droiddeck.launcher.frontend.Library
-import com.droiddeck.launcher.runtime.DesktopLangExport
 import com.droiddeck.launcher.runtime.UserApps
 import com.droiddeck.launcher.session.SessionService
 import com.droiddeck.launcher.store.UserAppsState
@@ -143,8 +143,13 @@ internal fun DesktopPage(s: FrontEndState, a: FrontEndActions, modifier: Modifie
             PrimaryButton(open, enabled = !s.busy, main = true, large = true, icon = Icons.Outlined.DesktopWindows, onClick = click)
         },
         beside = {
-            HeroIconButton(Icons.Outlined.Storefront, stringResource(R.string.flathub_name), FlathubTeal, "desktop:flathub") { at -> openFrom(at, null, "store") }
-            HeroIconButton(Icons.Filled.Add, stringResource(R.string.user_apps_add), null, "desktop:add") { if (!s.busy) adding = true }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroIconButton(Icons.Outlined.Storefront, stringResource(R.string.flathub_name), FlathubTeal, "desktop:flathub") { at -> openFrom(at, null, "store") }
+                    HeroIconButton(Icons.Filled.Add, stringResource(R.string.user_apps_add), null, "desktop:add") { if (!s.busy) adding = true }
+                }
+                if (s.desktopPresent) UninstallDesktop(enabled = !s.runtimeActionsBlocked, onUninstall = a.onRemoveDesktop)
+            }
         },
         rows = { tab ->
             if (tab == SheetTab.FILES) DesktopFiles(s, a)
@@ -363,49 +368,11 @@ private fun DesktopFiles(s: FrontEndState, a: FrontEndActions) {
             UninstallDesktop(enabled = !s.runtimeActionsBlocked, onUninstall = a.onRemoveDesktop)
         }
     }
-    if (s.desktopPresent) DesktopLanguageSection(a.onSetDesktopLanguage, a.onExportDesktopLang)
-}
-
-/**
- * The desktop's language, both ways: put it on Traditional Chinese, and pack up what decides it
- * when the desktop will not come up in Chinese at all.
- *
- * The one-click install sets the language as the Chinese pack goes in, so the row is here for the
- * device whose pack went in before that existed, and for one whose language was changed in KDE
- * since - picking a language there is meant to stand, so nothing sets it behind the user's back.
- * The export is the fallback for a desktop that is in English anyway: the config Plasma reads, the
- * system's locale files and the scripts that write them, in one zip written where the user points
- * it, since there is no shell on a device to go looking in.
- */
-@Composable
-private fun DesktopLanguageSection(onSetChinese: () -> Unit, onExport: () -> Unit) {
-    val progress = DesktopLangExport.progress
-    SettingsGroup(stringResource(R.string.desktop_lang_export_group)) {
-        SettingsRow(
-            stringResource(R.string.desktop_lang_apply),
-            stringResource(R.string.desktop_lang_apply_hint),
-        ) {
-            SecondaryButton(
-                stringResource(R.string.desktop_lang_apply_button),
-                enabled = progress == null, compact = true,
-                onClick = onSetChinese,
-            )
-        }
-        SettingsRow(
-            stringResource(R.string.desktop_lang_export),
-            stringResource(R.string.desktop_lang_export_hint),
-        ) {
-            SecondaryButton(
-                stringResource(R.string.desktop_lang_export_button),
-                enabled = progress == null, compact = true, progress = progress,
-                onClick = onExport,
-            )
-        }
-    }
 }
 
 @Composable
 private fun UninstallDesktop(enabled: Boolean, onUninstall: () -> Unit) {
+    val canUninstall by rememberUpdatedState(enabled)
     val colors = MaterialTheme.colorScheme
     val label = stringResource(R.string.common_uninstall)
     val title = stringResource(R.string.desktop_uninstall_title)
@@ -423,7 +390,7 @@ private fun UninstallDesktop(enabled: Boolean, onUninstall: () -> Unit) {
                 Text(note, fontSize = 13.sp, color = colors.onSurfaceVariant, modifier = Modifier.stepItem(1).padding(start = 4.dp, bottom = 12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth().stepItem(2)) {
                     StepChoice(keep, enabled = open, modifier = Modifier.focusRequester(first)) { Steps.fold() }
-                    StepChoice(label, danger = true, enabled = open) { Steps.fold(); onUninstall() }
+                    StepChoice(label, danger = true, enabled = open && canUninstall) { Steps.fold(); onUninstall() }
                 }
             })
         }

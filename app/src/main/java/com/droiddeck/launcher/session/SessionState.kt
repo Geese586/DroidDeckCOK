@@ -42,6 +42,8 @@ object SessionState {
     @Volatile
     var running = false
     @Volatile
+    var activityDisplayId = 0
+    @Volatile
     var runtimeDriver: String? = null
     var suspended by mutableStateOf(false)
     @Volatile var pipActive = false
@@ -53,15 +55,6 @@ object SessionState {
     var steamUi: String? = null
     @Volatile
     var steamUrl: String? = null
-    /**
-     * This session was started from "advanced play": it offers the edge menu while it loads, and it
-     * brings the client up to date itself so that the download the user is watching is the one the
-     * menu steers (see the install script's BL_STEAM_SYNC). Set by the activity before the service
-     * starts, read once when the guest command is built.
-     */
-    @Volatile
-    var lineMenu = false
-    /** A session the guest asked for (the desktop's Steam launchers): started by the activity once this one has ended. */
     @Volatile
     var steamClientArch: String? = null
     // A Play SteamVR request can arrive while an existing session is visible.

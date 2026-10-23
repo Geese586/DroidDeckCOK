@@ -81,3 +81,7 @@ Thumbs.db
 desktop.ini
 app/src/main/assets/directaudio/
 /tools/vr/out/
+
+# DroidDeckCOK: the five add-on packs are staged into the APK assets by tools/packs/build.sh.
+# 30 MB of generated archives, never source - same policy as assets/linuxfs/ above.
+/app/src/main/assets/packs/
