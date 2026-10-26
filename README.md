@@ -22,6 +22,9 @@ https://www.bilibili.com/video/BV1XAHd6PEKT/?vd_source=55a7f582a98d214a03f037a27
 中文说明安装教学视频地址Youtube：
 https://www.youtube.com/watch?v=ND505ZGazeA
 
+推荐Adreno系列(骁龙)GPU驱动下载地址：
+https://github.com/The412Banner/Banners-Turnip/releases
+
 DroidDeck 把 SteamOS 的体验搬到 Android：在 Adreno 掌机上跑 Valve 的 Steam 客户端（Big Picture 大屏界面），Windows 游戏走 Valve 的 ARM64 Proton。
 
 本仓库是 [Droid-Deck/DroidDeck](https://github.com/Droid-Deck/DroidDeck) 的改造版，**跟随上游滚动更新，本文不绑定任何具体版本号**。功能与上游一致，只做了下面四件事，并因为密钥的原因**重新签了名**（见「[五、签名说明](#五签名说明为什么本仓库是自己签的)」）：
