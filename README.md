@@ -9,12 +9,7 @@
 
 **DroidDeckCOK**（COK = **C**hinese **O**ne **K**ey）是本仓库的名字，指这份**在官方 DroidDeck 上加了「首次本地一键安装」**的中文本地化改造版。**改名只落在构建产物的文件名上**：包名与应用名与上游完全相同，**版本号跟上游那一版走、只去掉开头的 `0.`**，本仓库自己的构建号另显示一行 `COK(...)`（见「[二、安装 APK](#二安装-apk)」）。
 
-离线一键安装包文件，百度网盘，永久分享：
-链接: https://pan.baidu.com/s/1PY7ow7K81tvcqq0AAj8uNQ 提取码: 9527 
-
-离线一键安装包文件，夸克网盘，永久分享：
-链接：https://pan.quark.cn/s/3962c8e97fde
-提取码：DRMQ
+网盘分享，因某种原因Proton文件居然被举报违规，所以需要资料的请到下列B站对我发关键字讯息"droiddeck下载"将自动给予最新分享链接。
 
 中文说明安装教学视频地址B站：
 https://www.bilibili.com/video/BV1XAHd6PEKT/?vd_source=55a7f582a98d214a03f037a275fc90b3#reply320122768208
